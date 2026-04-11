@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = "0.8.8"
+axum = { version = "0.8.8", features = ["multipart"]}
 brakes = { version = "0.1.1", features = ["memcache", "tower"] }
 proto = { path = "../proto" }
 redis = { version = "1.2.0", features = ["tokio-comp", "r2d2"] }
@@ -16,6 +16,7 @@ aws-sdk-s3 = { version = "1.129.0", features = ["rt-tokio"] }
 anyhow = "1.0.102"
 memcache = "0.18.0"
 serde = { version = "1.0.228", features = ["derive"] }
+tokio-stream = "0.1.18"
 
 [[bin]] # Bin to run the HelloWorld gRPC server
 name = "grpc-server"

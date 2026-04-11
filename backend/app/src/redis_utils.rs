@@ -1,44 +1,96 @@
 extern crate redis;
 
 use anyhow::{Result, anyhow};
-use redis::AsyncTypedCommands;
+use redis::{AsyncTypedCommands, RedisError};
+use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, path::MAIN_SEPARATOR};
+use tokio_stream::StreamExt;
 
-pub async fn set_file_metadata(
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileMetadata {
+    pub display_name: String,
+    pub file_size: usize,
+    pub file_description: String,
+}
+
+impl FileMetadata {
+    pub fn from_hset(hset: HashMap<String, String>) -> Result<Self> {
+        if hset.len() != 3 {
+            return Err(anyhow!("Unexpected length: {:?}", hset.len()));
+        }
+
+        let mut file_size: usize = 0;
+        let mut display_name: String = String::from("unknown");
+        let mut file_description: String = String::from("no description");
+
+        for (k, v) in hset {
+            match k.as_str() {
+                "file_size" => file_size = v.parse::<usize>()?,
+                "display_name" => display_name = v,
+                "file_description" => file_description = v,
+                _ => continue,
+            }
+        }
+
+        Ok(Self {
+            display_name,
+            file_size,
+            file_description,
+        })
+    }
+}
+
+pub async fn hset_file_metadata(
     client: &redis::Client,
-    file_path: &str,
     display_name: &str,
+    file_size: usize,
+    file_description: &str,
 ) -> Result<()> {
     let mut conn = client.get_multiplexed_async_connection().await?;
-    conn.set(format!("file:{}", display_name), file_path)
-        .await?;
+
+    conn.hset_multiple(
+        format!("file:{}", display_name),
+        &[
+            ("display_name", display_name),
+            ("size", &file_size.to_string()),
+            ("file_description", file_description),
+        ],
+    )
+    .await?;
     Ok(())
 }
 
-pub async fn get_file_metadata(client: &redis::Client, display_name: &str) -> Result<String> {
+pub async fn hget_file_metadata(
+    client: &redis::Client,
+    display_name: &str,
+) -> Result<FileMetadata> {
     let mut conn = client.get_multiplexed_async_connection().await?;
-    let result = conn.get(format!("file:{}", display_name)).await?;
-    match result {
-        Some(s) => Ok(s),
-        None => Err(anyhow!(
-            "Could not find file path for display name '{}'",
-            display_name
-        )),
+    let result = conn.hgetall(display_name).await?;
+    FileMetadata::from_hset(result)
+}
+
+pub async fn get_all_files_and_metadata(client: &redis::Client) -> Result<Vec<FileMetadata>> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let mut files: Vec<FileMetadata> = Vec::new();
+
+    let keys: Vec<String> = conn
+        .scan_match("file:*")
+        .await?
+        .map(|r| r.unwrap())
+        .collect()
+        .await;
+
+    for key in keys {
+        let hset = conn.hgetall(&key).await?;
+        let file = FileMetadata::from_hset(hset)?;
+        files.push(file);
     }
+
+    Ok(files)
 }
 
 pub async fn delete_file_metadata(client: &redis::Client, display_name: &str) -> Result<()> {
     let mut conn = client.get_multiplexed_async_connection().await?;
     conn.del(format!("file:{}", display_name)).await?;
     Ok(())
-}
-
-pub async fn select_all_files(client: &redis::Client) -> Result<Vec<String>> {
-    let mut conn = client.get_multiplexed_async_connection().await?;
-    let mut results: redis::AsyncIter<String> = conn.scan_match("file:*").await?;
-    let mut files: Vec<String> = Vec::new();
-    while let Some(r) = results.next_item().await {
-        let res = r?;
-        files.push(res);
-    }
-    Ok(files)
 }

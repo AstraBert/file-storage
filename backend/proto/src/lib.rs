@@ -24,15 +24,12 @@ impl FileStorageService for FileStorageServer {
         request: Request<StoreFileRequest>,
     ) -> Result<Response<StoreFileResponse>, Status> {
         let request_inner = request.into_inner();
-        let body = aws_sdk_s3::primitives::ByteStream::from_path(std::path::Path::new(
-            &request_inner.file_path,
-        ))
-        .await;
+        let body = aws_sdk_s3::primitives::ByteStream::from(request_inner.file_data);
         self.client
             .put_object()
             .bucket(&request_inner.bucket_name)
             .key(&request_inner.key)
-            .body(body.unwrap())
+            .body(body)
             .send()
             .await
             .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?;
@@ -44,7 +41,7 @@ impl FileStorageService for FileStorageServer {
         request: Request<GetPresignedUrlRequest>,
     ) -> Result<Response<GetPresignedUrlResponse>, Status> {
         let request_inner = request.into_inner();
-        let expires_in = Duration::from_secs(3600_u64);
+        let expires_in = Duration::from_secs(request_inner.expires_in);
         let presigned_request = self
             .client
             .get_object()

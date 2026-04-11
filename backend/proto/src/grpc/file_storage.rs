@@ -2,8 +2,8 @@
 /// Request to store a file.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct StoreFileRequest {
-    #[prost(string, tag = "1")]
-    pub file_path: ::prost::alloc::string::String,
+    #[prost(bytes = "vec", tag = "1")]
+    pub file_data: ::prost::alloc::vec::Vec<u8>,
     #[prost(string, tag = "2")]
     pub bucket_name: ::prost::alloc::string::String,
     #[prost(string, tag = "3")]
@@ -19,6 +19,8 @@ pub struct GetPresignedUrlRequest {
     pub bucket_name: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub key: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "3")]
+    pub expires_in: u64,
 }
 /// Presigned URL response
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
