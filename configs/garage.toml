@@ -4,8 +4,8 @@ db_engine = "lmdb"
 
 replication_mode = "none"
 rpc_bind_addr = "[::]:3901"
-rpc_public_addr = "127.0.0.1:3901"
-rpc_secret = "xW9+RaCP1wUfUwuNPo+5hw1V4bUI7YwlFNo/K18K6bg="
+rpc_public_addr = "0.0.0.0:3901"
+rpc_secret = "ea88aa589b81fedcc5a44d9d4f51bf82b67086697c9c872d4fbdabb01d0762b7"
 
 [s3_api]
 s3_region = "garage"

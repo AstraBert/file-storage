@@ -14,7 +14,7 @@ pub mod grpc {
 
 #[derive(Debug)]
 pub struct FileStorageServer {
-    client: Arc<Client>,
+    pub client: Arc<Client>,
 }
 
 #[tonic::async_trait]

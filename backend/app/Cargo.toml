@@ -5,12 +5,17 @@ edition = "2024"
 
 [dependencies]
 axum = "0.8.8"
-brakes = { version = "0.1.1", features = ["redis", "tower"] }
+brakes = { version = "0.1.1", features = ["memcache", "tower"] }
 proto = { path = "../proto" }
-r2d2 = "0.8.10"
-redis = { version = "1.2.0", features = ["tokio-comp"] }
+redis = { version = "1.2.0", features = ["tokio-comp", "r2d2"] }
 tokio = { version = "1.51.1", features = ["rt-multi-thread", "macros"] }
 tower-http = { version = "0.6.8", features = ["fs", "cors"] }
+tonic = "*"
+aws-config = { version = "1.8.15", features = ["behavior-version-latest"] }
+aws-sdk-s3 = { version = "1.129.0", features = ["rt-tokio"] }
+anyhow = "1.0.102"
+memcache = "0.18.0"
+serde = { version = "1.0.228", features = ["derive"] }
 
 [[bin]] # Bin to run the HelloWorld gRPC server
 name = "grpc-server"

@@ -1,6 +1,7 @@
 services:
   garage:
     image: dxflrs/garage:v0.9.3
+    container_name: garage
     restart: unless-stopped
     environment:
       GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN}
@@ -16,9 +17,17 @@ services:
     networks:
       - keycloak_network
 
+  memcached:
+    image: memcached
+    container_name: memcached
+    ports:
+      - "11211:11211"
+    command: memcached --port=11211 --memory-limit=64 --conn-limit=1024 --threads=4 # 64 -> 64MB memory limit
+    restart: unless-stopped
+
   redis:
     image: redis:latest
-    container_name: my-redis
+    container_name: redis
     ports:
       - "6379:6379"
     volumes:
@@ -31,6 +40,7 @@ services:
 
   postgres:
     image: postgres:16.2
+    container_name: postgres-keycloak
     volumes:
       - postgres_data:/var/lib/postgresql/data
     environment:
@@ -42,6 +52,7 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:23.0.6
+    container_name: keycloack
     command: start
     environment:
       KC_HOSTNAME: localhost
