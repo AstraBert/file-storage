@@ -1,16 +1,26 @@
-use std::sync::Arc;
+use std::{net::SocketAddr, sync::Arc};
 
-use axum::{
-    Json,
-    extract::{Multipart, State},
-    http::StatusCode,
-    response::{IntoResponse, Response},
+use crate::{
+    redis_utils::{
+        FileMetadata, delete_file_metadata, get_all_files_and_metadata, hset_file_metadata,
+    },
+    utils::{AuthConfig, Claims, build_rate_limiter, extract_token, fetch_jwks},
 };
-use proto::grpc::file_storage::StoreFileRequest;
+use anyhow::anyhow;
+use axum::{
+    Json, Router,
+    body::Body,
+    extract::{Multipart, Path, Query, Request, State},
+    http::{HeaderMap, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
+    routing::{get, post},
+};
+use brakes::middleware::tower::TowerRateLimiterLayer;
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use proto::grpc::file_storage::{DeleteObjectRequest, GetPresignedUrlRequest, StoreFileRequest};
 use serde::{Deserialize, Serialize};
-use tonic::transport::{Channel, Server};
-
-use crate::redis_utils::{FileMetadata, get_all_files_and_metadata, hset_file_metadata};
+use tonic::transport::Channel;
 
 mod redis_utils;
 mod utils;
@@ -23,19 +33,17 @@ struct GetFilesResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct PostFileRequest {
-    display_name: String,
-    full_path: String,
-    base64_data: String,
+struct GetPresignedUrlResponse {
+    presigned_url: String,
 }
 
-struct AnyHowError(anyhow::Error);
+struct AnyHowError(anyhow::Error, Option<StatusCode>);
 
 // Tell axum how to convert `AnyHowError` into a response.
 impl IntoResponse for AnyHowError {
     fn into_response(self) -> Response {
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            self.1.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             format!("Something went wrong: {}", self.0),
         )
             .into_response()
@@ -49,7 +57,7 @@ where
     E: Into<anyhow::Error>,
 {
     fn from(err: E) -> Self {
-        Self(err.into())
+        Self(err.into(), None)
     }
 }
 
@@ -59,6 +67,41 @@ struct AppState {
     grpc_client: Arc<
         proto::grpc::file_storage::file_storage_service_client::FileStorageServiceClient<Channel>,
     >,
+    auth_config: Arc<AuthConfig>,
+}
+
+async fn auth_middleware(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let token = extract_token(&headers)?;
+    let header = decode_header(&token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let jwks = fetch_jwks(&state.auth_config.jwks_verification_url())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
+    let jwk = jwks
+        .keys
+        .iter()
+        .find(|k| k.kid.as_ref() == Some(&kid))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+
+    let decoding_key =
+        DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.validate_exp = true;
+
+    let token_data = decode::<Claims>(&token, &decoding_key, &validation)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+
+    request.extensions_mut().insert(token_data.claims);
+
+    Ok(next.run(request).await)
 }
 
 async fn get_files(State(state): State<AppState>) -> Result<Json<GetFilesResponse>, AnyHowError> {
@@ -70,7 +113,7 @@ async fn get_files(State(state): State<AppState>) -> Result<Json<GetFilesRespons
 async fn post_file(
     State(state): State<AppState>,
     mut multipart: Multipart,
-) -> Result<impl IntoResponse, StatusCode> {
+) -> Result<impl IntoResponse, AnyHowError> {
     let mut file_data: Option<Vec<u8>> = None;
     let mut file_name: Option<String> = None;
     let mut description: Option<String> = None;
@@ -78,7 +121,7 @@ async fn post_file(
     while let Some(field) = multipart
         .next_field()
         .await
-        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .map_err(|e| AnyHowError(anyhow!(e.to_string()), None))?
     {
         let name = field.name().unwrap_or("").to_string();
 
@@ -89,12 +132,16 @@ async fn post_file(
                     field
                         .bytes()
                         .await
-                        .map_err(|_| StatusCode::BAD_REQUEST)?
+                        .map_err(|e| {
+                            AnyHowError(anyhow!(e.to_string()), Some(StatusCode::BAD_REQUEST))
+                        })?
                         .to_vec(),
                 );
             }
             "description" => {
-                description = Some(field.text().await.map_err(|_| StatusCode::BAD_REQUEST)?);
+                description = Some(field.text().await.map_err(|e| {
+                    AnyHowError(anyhow!(e.to_string()), Some(StatusCode::BAD_REQUEST))
+                })?);
             }
             _ => {
                 // Skip unknown fields
@@ -102,7 +149,10 @@ async fn post_file(
         }
     }
 
-    let file_data = file_data.ok_or(StatusCode::BAD_REQUEST)?;
+    let file_data = file_data.ok_or(AnyHowError(
+        anyhow!("No file data available"),
+        Some(StatusCode::BAD_REQUEST),
+    ))?;
     let file_name = file_name.unwrap_or_else(|| "unknown".to_string());
     let description = description.unwrap_or_default();
 
@@ -112,8 +162,7 @@ async fn post_file(
         file_data.len(),
         &description,
     )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    .await?;
 
     (*state.grpc_client)
         .clone()
@@ -123,11 +172,107 @@ async fn post_file(
             key: file_name,
         })
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| AnyHowError(anyhow!(e.to_string()), None))?;
 
     Ok((StatusCode::OK, "File uploaded successfully"))
 }
 
-fn main() {
-    println!("Hello, world!");
+async fn delete_file(
+    State(state): State<AppState>,
+    Path(display_name): Path<String>,
+) -> Result<impl IntoResponse, AnyHowError> {
+    delete_file_metadata(&state.redis_client, &display_name).await?;
+    (*state.grpc_client)
+        .clone()
+        .delete_object(DeleteObjectRequest {
+            bucket_name: BUCKET_NAME.to_string(),
+            key: display_name,
+        })
+        .await
+        .map_err(|e| AnyHowError(anyhow!(e.to_string()), None))?;
+
+    Ok((StatusCode::NO_CONTENT, ""))
+}
+
+async fn get_file_presigned_url(
+    State(state): State<AppState>,
+    Path(display_name): Path<String>,
+    Query(expires_in): Query<u64>,
+) -> Result<Json<GetPresignedUrlResponse>, AnyHowError> {
+    let response = (*state.grpc_client)
+        .clone()
+        .get_presigned_url(GetPresignedUrlRequest {
+            bucket_name: BUCKET_NAME.to_string(),
+            key: display_name,
+            expires_in,
+        })
+        .await
+        .map_err(|e| AnyHowError(anyhow!(e.to_string()), None))?;
+    Ok(Json(GetPresignedUrlResponse {
+        presigned_url: response.into_inner().presigned_url,
+    }))
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let cache = memcache::connect("memcache://memcached:11211")?;
+    let redis_client = redis::Client::open("redis://redis:6379")?;
+    let grpc_client =
+        proto::grpc::file_storage::file_storage_service_client::FileStorageServiceClient::connect(
+            "http://grpc-server:50051",
+        )
+        .await?;
+    let auth_config = Arc::new(AuthConfig::new(
+        "http://keycloack:8080".to_string(),
+        "file-storage".to_string(),
+    ));
+    let app_state = AppState {
+        redis_client: Arc::new(redis_client),
+        grpc_client: Arc::new(grpc_client),
+        auth_config: auth_config,
+    };
+    let post_delete_rl = build_rate_limiter(&cache, 100);
+    let get_url_rl = build_rate_limiter(&cache, 1000);
+    let post_delete_rl_layer =
+        TowerRateLimiterLayer::default(post_delete_rl, |r: &axum::http::Request<Body>| {
+            r.headers()
+                .get("x-forwarded-for")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        });
+    let get_url_rl_layer =
+        TowerRateLimiterLayer::default(get_url_rl, |r: &axum::http::Request<Body>| {
+            r.headers()
+                .get("x-forwarded-for")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        });
+    let app = Router::new()
+        .route("/files", get(get_files))
+        .route(
+            "/files/{display_name}",
+            post(post_file)
+                .delete(delete_file)
+                .layer(post_delete_rl_layer),
+        )
+        .route(
+            "/urls/{display_name}",
+            get(get_file_presigned_url).layer(get_url_rl_layer),
+        )
+        .layer(middleware::from_fn_with_state(
+            app_state.clone(),
+            auth_middleware,
+        ))
+        .with_state(app_state);
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:4444").await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
+    Ok(())
 }

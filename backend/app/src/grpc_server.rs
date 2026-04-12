@@ -9,7 +9,7 @@ use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let addr = "[::1]:50051".parse()?;
+    let addr = "0.0.0.0:50051".parse()?;
     let garage_access_key = env::var("GARAGE_ACCESS_KEY")
         .expect("GARAGE_ACCESS_KEY should be defined in the environment");
     let garage_secret_key = env::var("GARAGE_ACCESS_KEY")

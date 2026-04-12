@@ -1,9 +1,9 @@
 extern crate redis;
 
 use anyhow::{Result, anyhow};
-use redis::{AsyncTypedCommands, RedisError};
+use redis::AsyncTypedCommands;
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, path::MAIN_SEPARATOR};
+use std::collections::HashMap;
 use tokio_stream::StreamExt;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,14 +60,14 @@ pub async fn hset_file_metadata(
     Ok(())
 }
 
-pub async fn hget_file_metadata(
-    client: &redis::Client,
-    display_name: &str,
-) -> Result<FileMetadata> {
-    let mut conn = client.get_multiplexed_async_connection().await?;
-    let result = conn.hgetall(display_name).await?;
-    FileMetadata::from_hset(result)
-}
+// async fn hget_file_metadata(
+//     client: &redis::Client,
+//     display_name: &str,
+// ) -> Result<FileMetadata> {
+//     let mut conn = client.get_multiplexed_async_connection().await?;
+//     let result = conn.hgetall(display_name).await?;
+//     FileMetadata::from_hset(result)
+// }
 
 pub async fn get_all_files_and_metadata(client: &redis::Client) -> Result<Vec<FileMetadata>> {
     let mut conn = client.get_multiplexed_async_connection().await?;
