@@ -3,7 +3,7 @@ extern crate redis;
 use anyhow::{Result, anyhow};
 use redis::AsyncTypedCommands;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{collections::HashMap, path};
 use tokio_stream::StreamExt;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -60,14 +60,34 @@ pub async fn hset_file_metadata(
     Ok(())
 }
 
-// async fn hget_file_metadata(
-//     client: &redis::Client,
-//     display_name: &str,
-// ) -> Result<FileMetadata> {
-//     let mut conn = client.get_multiplexed_async_connection().await?;
-//     let result = conn.hgetall(display_name).await?;
-//     FileMetadata::from_hset(result)
-// }
+pub async fn check_file_existence_and_copies(
+    client: &redis::Client,
+    display_name: &str,
+) -> Result<String> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let result = conn.exists(format!("file:{}", display_name)).await?;
+    if result {
+        let p = path::PathBuf::from(display_name);
+        let stem = p.file_stem().unwrap();
+        let ext = p.extension().unwrap_or_default();
+        let keys: Vec<String> = conn
+            .scan_match(format!("file:{}_*", stem.to_string_lossy().to_string()))
+            .await?
+            .map(|r| r.unwrap())
+            .collect()
+            .await;
+        if keys.len() > 0 {
+            let new_display_name = format!(
+                "{}_{:?}.{}",
+                stem.to_string_lossy().to_string(),
+                keys.len(),
+                ext.to_string_lossy().to_string(),
+            );
+            return Ok(new_display_name.trim_end_matches(".").to_string());
+        }
+    }
+    Ok(display_name.to_string())
+}
 
 pub async fn get_all_files_and_metadata(client: &redis::Client) -> Result<Vec<FileMetadata>> {
     let mut conn = client.get_multiplexed_async_connection().await?;

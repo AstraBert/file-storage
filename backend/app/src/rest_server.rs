@@ -2,7 +2,8 @@ use std::{net::SocketAddr, sync::Arc};
 
 use crate::{
     redis_utils::{
-        FileMetadata, delete_file_metadata, get_all_files_and_metadata, hset_file_metadata,
+        FileMetadata, check_file_existence_and_copies, delete_file_metadata,
+        get_all_files_and_metadata, hset_file_metadata,
     },
     utils::{AuthConfig, Claims, build_rate_limiter, extract_token, fetch_jwks},
 };
@@ -35,6 +36,11 @@ struct GetFilesResponse {
 #[derive(Debug, Serialize, Deserialize)]
 struct GetPresignedUrlResponse {
     presigned_url: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct CheckFileExistenceResponse {
+    file_name: String,
 }
 
 struct AnyHowError(anyhow::Error, Option<StatusCode>);
@@ -110,6 +116,15 @@ async fn get_files(State(state): State<AppState>) -> Result<Json<GetFilesRespons
     Ok(Json(GetFilesResponse { files }))
 }
 
+async fn check_file_existence(
+    State(state): State<AppState>,
+    Path(display_name): Path<String>,
+) -> Result<Json<CheckFileExistenceResponse>, AnyHowError> {
+    let file_name = check_file_existence_and_copies(&state.redis_client, &display_name).await?;
+
+    Ok(Json(CheckFileExistenceResponse { file_name }))
+}
+
 async fn post_file(
     State(state): State<AppState>,
     mut multipart: Multipart,
@@ -127,7 +142,6 @@ async fn post_file(
 
         match name.as_str() {
             "file" => {
-                file_name = field.file_name().map(|s| s.to_string());
                 file_data = Some(
                     field
                         .bytes()
@@ -137,6 +151,11 @@ async fn post_file(
                         })?
                         .to_vec(),
                 );
+            }
+            "file_name" => {
+                file_name = Some(field.text().await.map_err(|e| {
+                    AnyHowError(anyhow!(e.to_string()), Some(StatusCode::BAD_REQUEST))
+                })?)
             }
             "description" => {
                 description = Some(field.text().await.map_err(|e| {
@@ -233,8 +252,19 @@ async fn main() -> anyhow::Result<()> {
     };
     let post_delete_rl = build_rate_limiter(&cache, 100);
     let get_url_rl = build_rate_limiter(&cache, 1000);
+    let check_exists_rl = build_rate_limiter(&cache, 100);
     let post_delete_rl_layer =
         TowerRateLimiterLayer::default(post_delete_rl, |r: &axum::http::Request<Body>| {
+            r.headers()
+                .get("x-forwarded-for")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        });
+
+    let check_exists_rl_layer =
+        TowerRateLimiterLayer::default(check_exists_rl, |r: &axum::http::Request<Body>| {
             r.headers()
                 .get("x-forwarded-for")
                 .unwrap()
@@ -258,6 +288,10 @@ async fn main() -> anyhow::Result<()> {
             post(post_file)
                 .delete(delete_file)
                 .layer(post_delete_rl_layer),
+        )
+        .route(
+            "/checks/{display_name}",
+            get(check_file_existence).layer(check_exists_rl_layer),
         )
         .route(
             "/urls/{display_name}",

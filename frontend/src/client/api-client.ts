@@ -1,6 +1,10 @@
 import keycloak from "../auth/keycloak";
 import type { FileMetadata } from "./schemas";
-import { FileMetadataArraySchema } from "./schemas";
+import {
+  FileMetadataArraySchema,
+  CheckFileExistsSchema,
+  PresignedUrlSchema,
+} from "./schemas";
 
 export class FileStorageClient {
   readonly baseUrl: string;
@@ -51,7 +55,22 @@ export class FileStorageClient {
     formData.append("description", fileDescription);
     const displayName = file.name;
     const token = this.getToken();
-    const response = await fetch(`files/${displayName}`, {
+    const exists = await fetch(`${this.baseUrl}/checks/${displayName}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!exists.ok) {
+      const details = await exists.text();
+      throw new Error(
+        `Response returned with status ${exists.status}: ${details}`,
+      );
+    }
+    const existsData = await exists.json();
+    const existsVal = await CheckFileExistsSchema.parseAsync(existsData);
+    const newDisplayName = existsVal.file_name;
+    formData.append("file_name", newDisplayName);
+    const response = await fetch(`${this.baseUrl}/files`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -63,6 +82,24 @@ export class FileStorageClient {
         `Response returned with status ${response.status}: ${details}`,
       );
     }
-    return file.name;
+    return newDisplayName;
+  }
+
+  async getPresignedUrl(fileName: string) {
+    const token = await this.getToken();
+    const response = await fetch(`${this.baseUrl}/urls/${fileName}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      const details = await response.text();
+      throw new Error(
+        `Response returned with status ${response.status}: ${details}`,
+      );
+    }
+    const responseData = await response.json();
+    const valData = await PresignedUrlSchema.parseAsync(responseData);
+    return valData.presigned_url;
   }
 }
