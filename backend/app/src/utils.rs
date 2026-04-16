@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
 use axum::http::{HeaderMap, StatusCode};
 use brakes::{RateLimiter, backend::memcache::MemCache, types::token_bucket::TokenBucket};
@@ -13,12 +13,48 @@ pub fn build_rate_limiter(cache: &Client, rps: u32) -> RateLimiter<TokenBucket, 
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct RealmAccess {
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ResourceAccess {
+    pub roles: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Claims {
+    // Standard JWT claims
     pub sub: String,
     pub exp: usize,
+    pub iat: usize,
+    pub iss: String,
+    pub aud: serde_json::Value, // Can be a string or array of strings
+    pub jti: Option<String>,
+
+    // Keycloak-specific
+    pub typ: Option<String>,
+    pub azp: Option<String>,
+    pub sid: Option<String>,
+    pub session_state: Option<String>,
+    pub acr: Option<String>,
+    pub scope: Option<String>,
+    pub nonce: Option<String>,
+    pub auth_time: Option<usize>,
+
+    // Origins & access
+    #[serde(rename = "allowed-origins")]
+    pub allowed_origins: Option<Vec<String>>,
+    pub realm_access: Option<RealmAccess>,
+    pub resource_access: Option<HashMap<String, ResourceAccess>>,
+
+    // User info
+    pub name: Option<String>,
+    pub given_name: Option<String>,
+    pub family_name: Option<String>,
     pub preferred_username: Option<String>,
     pub email: Option<String>,
-    // Add other claims you need
+    pub email_verified: Option<bool>,
 }
 
 #[derive(Debug, Clone)]

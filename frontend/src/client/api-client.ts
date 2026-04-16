@@ -6,7 +6,7 @@ import {
   PresignedUrlSchema,
 } from "./schemas";
 
-export class FileStorageClient {
+class FileStorageClient {
   readonly baseUrl: string;
 
   constructor() {
@@ -71,6 +71,7 @@ export class FileStorageClient {
     const newDisplayName = existsVal.file_name;
     formData.append("file_name", newDisplayName);
     const response = await fetch(`${this.baseUrl}/files`, {
+      method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -88,6 +89,7 @@ export class FileStorageClient {
   async getPresignedUrl(fileName: string) {
     const token = await this.getToken();
     const response = await fetch(`${this.baseUrl}/urls/${fileName}`, {
+      method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -102,4 +104,26 @@ export class FileStorageClient {
     const valData = await PresignedUrlSchema.parseAsync(responseData);
     return valData.presigned_url;
   }
+
+  async deleteFile(fileName: string) {
+    const token = await this.getToken();
+    const response = await fetch(`${this.baseUrl}/files/${fileName}`, {
+      method: "DELETE",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!response.ok) {
+      const details = await response.text();
+      throw new Error(
+        `Response returned with status ${response.status}: ${details}`,
+      );
+    }
+  }
+}
+
+const fileStorageClient = new FileStorageClient();
+
+export function getFileStorageClient() {
+  return fileStorageClient;
 }
