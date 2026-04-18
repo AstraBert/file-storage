@@ -10,11 +10,17 @@ use tonic::transport::Server;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "0.0.0.0:50051".parse()?;
-    let garage_access_key = env::var("GARAGE_ACCESS_KEY")
-        .expect("GARAGE_ACCESS_KEY should be defined in the environment");
-    let garage_secret_key = env::var("GARAGE_ACCESS_KEY")
+    let garage_access_key_id =
+        env::var("GARAGE_KEY_ID").expect("GARAGE_KEY_ID should be defined in the environment");
+    let garage_secret_key = env::var("GARAGE_SECRET_KEY")
         .expect("GARAGE_SECRET_KEY should be defined in the environment");
-    let credentials = Credentials::new(garage_access_key, garage_secret_key, None, None, "garage");
+    let credentials = Credentials::new(
+        garage_access_key_id,
+        garage_secret_key,
+        None,
+        None,
+        "garage",
+    );
 
     let config = Config::builder()
         .credentials_provider(credentials)

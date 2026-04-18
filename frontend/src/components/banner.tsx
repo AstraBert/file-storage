@@ -8,13 +8,15 @@ import {
   ItemTitle,
 } from "@/components/ui/item";
 
-type ErrorBannerProps = {
+type BannerProps = {
   message: string;
+  error: boolean;
 };
 
-export function ErrorBanner(props: ErrorBannerProps) {
+export function Banner(props: BannerProps) {
+  const bg = props.error ? "bg-red-300" : "bg-green-300";
   return (
-    <div className="flex w-full max-w-lg flex-col gap-6 bg-red-300">
+    <div className={`flex w-full max-w-lg flex-col gap-6 ${bg}`}>
       <Item variant="outline">
         <ItemMedia variant="icon">
           <CircleX />

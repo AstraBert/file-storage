@@ -75,6 +75,42 @@ services:
     networks:
       - keycloak_network
 
+  rest-server:
+    image: file-storage-rest
+    container_name: rest-server
+    build:
+      context: backend/
+      dockerfile: rest.Dockerfile
+    ports:
+      - 4444:4444
+    networks:
+      - keycloak_network
+
+  grpc-server:
+    image: file-storage-grpc
+    container_name: grpc-server
+    build:
+      context: backend/
+      dockerfile: grpc.Dockerfile
+    ports:
+      - 50051:50051
+    environment:
+      GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY}
+      GARAGE_KEY_ID: ${GARAGE_KEY_ID}
+    networks:
+      - keycloak_network
+
+  frontend:
+    image: file-storage-frontend
+    container_name: frontend
+    build:
+      context: frontend/
+      dockerfile: Dockerfile
+    ports:
+      - 5173:80
+    networks:
+      - keycloak_network
+
 volumes:
   postgres_data:
     driver: local
