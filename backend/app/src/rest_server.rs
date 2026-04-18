@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, net::SocketAddr, sync::Arc};
 
 use crate::{
     redis_utils::{
@@ -15,7 +15,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use brakes::middleware::tower::TowerRateLimiterLayer;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
@@ -84,26 +84,34 @@ async fn auth_middleware(
 ) -> Result<Response, StatusCode> {
     let token = extract_token(&headers)?;
     let header = decode_header(&token).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    println!("Decoded header");
 
     let jwks = fetch_jwks(&state.auth_config.jwks_verification_url())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
+    println!("Kid: {}", kid);
     let jwk = jwks
         .keys
         .iter()
         .find(|k| k.kid.as_ref() == Some(&kid))
         .ok_or(StatusCode::UNAUTHORIZED)?;
+    println!("Found JWK with necessary key ID");
 
     let decoding_key =
         DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|_| StatusCode::UNAUTHORIZED)?;
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_exp = true;
+    validation.aud = Some(HashSet::from(["account".to_string()]));
 
-    let token_data = decode::<Claims>(&token, &decoding_key, &validation)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let token_data = decode::<Claims>(&token, &decoding_key, &validation).map_err(|e| {
+        println!("JWT decode error: {}", e.to_string());
+        StatusCode::UNAUTHORIZED
+    })?;
+
+    println!("Token data successfully validated");
 
     request.extensions_mut().insert(token_data.claims);
 
@@ -235,14 +243,17 @@ async fn get_file_presigned_url(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cache = memcache::connect("memcache://memcached:11211")?;
+    println!("Connected to memcached");
     let redis_client = redis::Client::open("redis://redis:6379")?;
+    println!("Connected to redis");
     let grpc_client =
         proto::grpc::file_storage::file_storage_service_client::FileStorageServiceClient::connect(
             "http://grpc-server:50051",
         )
         .await?;
+    println!("Connected to grpc server");
     let auth_config = Arc::new(AuthConfig::new(
-        "http://keycloack:8080".to_string(),
+        "http://keycloak:8080".to_string(),
         "file-storage".to_string(),
     ));
     let app_state = AppState {
@@ -250,11 +261,20 @@ async fn main() -> anyhow::Result<()> {
         grpc_client: Arc::new(grpc_client),
         auth_config: auth_config,
     };
-    let post_delete_rl = build_rate_limiter(&cache, 100);
+    let post_rl = build_rate_limiter(&cache, 100);
+    let delete_rl = build_rate_limiter(&cache, 100);
     let get_url_rl = build_rate_limiter(&cache, 1000);
     let check_exists_rl = build_rate_limiter(&cache, 100);
-    let post_delete_rl_layer =
-        TowerRateLimiterLayer::default(post_delete_rl, |r: &axum::http::Request<Body>| {
+    let post_rl_layer = TowerRateLimiterLayer::default(post_rl, |r: &axum::http::Request<Body>| {
+        r.headers()
+            .get("x-forwarded-for")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string()
+    });
+    let delete_rl_layer =
+        TowerRateLimiterLayer::default(delete_rl, |r: &axum::http::Request<Body>| {
             r.headers()
                 .get("x-forwarded-for")
                 .unwrap()
@@ -285,10 +305,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/files", get(get_files))
         .route(
             "/files/{display_name}",
-            post(post_file)
-                .delete(delete_file)
-                .layer(post_delete_rl_layer),
+            delete(delete_file).layer(delete_rl_layer),
         )
+        .route("/uploads", post(post_file).layer(post_rl_layer))
         .route(
             "/checks/{display_name}",
             get(check_file_existence).layer(check_exists_rl_layer),
@@ -303,6 +322,7 @@ async fn main() -> anyhow::Result<()> {
         ))
         .with_state(app_state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:4444").await?;
+    println!("Starting to serve the rest API on port 4444");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

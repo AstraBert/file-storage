@@ -10,7 +10,7 @@ class FileStorageClient {
   readonly baseUrl: string;
 
   constructor() {
-    this.baseUrl = "http://rest-server:4444";
+    this.baseUrl = "/api";
   }
 
   private async getToken() {
@@ -24,7 +24,7 @@ class FileStorageClient {
   }
 
   async getAllFiles(): Promise<FileMetadata[]> {
-    const token = this.getToken();
+    const token = await this.getToken();
     const response = await fetch(`${this.baseUrl}/files`, {
       method: "GET",
       headers: {
@@ -54,8 +54,9 @@ class FileStorageClient {
     formData.append("file", file);
     formData.append("description", fileDescription);
     const displayName = file.name;
-    const token = this.getToken();
+    const token = await this.getToken();
     const exists = await fetch(`${this.baseUrl}/checks/${displayName}`, {
+      method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -70,7 +71,7 @@ class FileStorageClient {
     const existsVal = await CheckFileExistsSchema.parseAsync(existsData);
     const newDisplayName = existsVal.file_name;
     formData.append("file_name", newDisplayName);
-    const response = await fetch(`${this.baseUrl}/files`, {
+    const response = await fetch(`${this.baseUrl}/uploads`, {
       method: "POST",
       headers: {
         Authorization: `Bearer ${token}`,

@@ -24,16 +24,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let config = Config::builder()
         .credentials_provider(credentials)
+        .behavior_version_latest()
         .region(Region::new("garage"))
         .endpoint_url("http://garage:3900")
         .force_path_style(true)
         .build();
 
     let aws_client = Client::from_conf(config);
+    println!("Created S3 client connected to Garage");
     let server = FileStorageServer {
         client: Arc::new(aws_client),
     };
 
+    println!("Starting to serve GRPC server on port 50051");
     Server::builder()
         .add_service(FileStorageServiceServer::new(server))
         .serve(addr)

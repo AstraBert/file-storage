@@ -15,6 +15,7 @@ type BannerProps = {
 
 export function Banner(props: BannerProps) {
   const bg = props.error ? "bg-red-300" : "bg-green-300";
+  const title = props.error ? "An error occurred" : "Success!";
   return (
     <div className={`flex w-full max-w-lg flex-col gap-6 ${bg}`}>
       <Item variant="outline">
@@ -22,7 +23,7 @@ export function Banner(props: BannerProps) {
           <CircleX />
         </ItemMedia>
         <ItemContent>
-          <ItemTitle>An error occurred</ItemTitle>
+          <ItemTitle>{title}</ItemTitle>
           <ItemDescription>{props.message}</ItemDescription>
         </ItemContent>
       </Item>

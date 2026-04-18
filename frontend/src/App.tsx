@@ -1,39 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import "./App.css";
 import { getFileStorageClient } from "./client/api-client";
-import type { FileMetadata } from "./client/schemas";
 import { LoadingSpinner } from "./components/spinner";
 import { FilesTable } from "./components/table";
 import { Banner } from "./components/banner";
 import { Input } from "./components/ui/input";
 import { Button } from "./components/ui/button";
 import { Label } from "./components/ui/label";
+import { useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-function App() {
+const queryClient = new QueryClient();
+
+function AppContent() {
   const client = getFileStorageClient();
-  const [files, setFiles] = useState<FileMetadata[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileDescription, setFileDescription] = useState<string>("");
   const [uploading, setUploading] = useState<boolean>(false);
   const [uploadingError, setUploadingError] = useState<string | null>(null);
   const [uploadingSuccess, setUploadingSuccess] = useState<string | null>(null);
-  useEffect(() => {
-    const fetchFiles = async () => {
-      try {
-        const data = await client.getAllFiles();
-        setFiles(data);
-      } catch (err) {
-        setError(`An error occurred while loading files: ${err}`);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchFiles();
-  }, [client]);
+  const {
+    data: files,
+    isLoading,
+    error,
+  } = useQuery({
+    queryKey: ["files"],
+    queryFn: () => client.getAllFiles(),
+  });
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFile = event.target.files?.[0];
@@ -82,14 +76,16 @@ function App() {
             A self-hostable, open-source app to store all your files
           </h2>
         </div>
-        {loading && <LoadingSpinner message="Loading your files..." />}
-        {!loading && files.length > 0 && (
+        {isLoading && <LoadingSpinner message="Loading your files..." />}
+        {!isLoading && files!.length > 0 && (
           <div className="flex flex-col items-center space-y-8">
-            <FilesTable files={files} />
+            <FilesTable files={files!} />
             <Input type="file">Upload a File</Input>
           </div>
         )}
-        {!loading && error && <Banner error={true} message={error} />}
+        {!isLoading && error && (
+          <Banner error={true} message={`An error occurred: ${error}`} />
+        )}
         <div className="flex flex-col mt-10 items-center gap-6 w-full max-w-md mx-auto">
           {/* File input */}
           <div className="w-full space-y-1.5">
@@ -161,6 +157,14 @@ function App() {
         </div>
       </div>
     </main>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppContent />
+    </QueryClientProvider>
   );
 }
 

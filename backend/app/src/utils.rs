@@ -99,12 +99,15 @@ pub fn extract_token(headers: &HeaderMap) -> Result<String, StatusCode> {
     if !headers.contains_key("Authorization") {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    println!("Header contains Authorization");
     let header_value = headers.get("Authorization").unwrap();
     let auth_header = header_value
         .to_str()
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    println!("Header value is a string");
     if !auth_header.starts_with("Bearer ") {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    println!("Auth starts with 'Bearer '");
     return Ok(auth_header.strip_prefix("Bearer ").unwrap().to_string());
 }

@@ -24,6 +24,8 @@ services:
       - "11211:11211"
     command: memcached --port=11211 --memory-limit=64 --conn-limit=1024 --threads=4 # 64 -> 64MB memory limit
     restart: unless-stopped
+    networks:
+      - keycloak_network
 
   redis:
     image: redis:latest
@@ -55,7 +57,7 @@ services:
     container_name: keycloack
     command: start
     environment:
-      KC_HOSTNAME: localhost
+      KC_HOSTNAME: keycloak
       KC_HOSTNAME_PORT: 8080
       KC_HOSTNAME_STRICT_BACKCHANNEL: false
       KC_HTTP_ENABLED: true
