@@ -87,6 +87,11 @@ services:
       - 4444:4444
     networks:
       - keycloak_network
+    depends_on:
+      - redis
+      - memcached
+      - grpc-server
+      - keycloak
 
   grpc-server:
     image: file-storage-grpc
@@ -101,6 +106,9 @@ services:
       GARAGE_KEY_ID: ${GARAGE_KEY_ID}
     networks:
       - keycloak_network
+    depends_on:
+      - garage
+      - keycloak
 
   frontend:
     image: file-storage-frontend
@@ -112,6 +120,9 @@ services:
       - 5173:80
     networks:
       - keycloak_network
+    depends_on:
+      - keycloak
+      - rest-server
 
 volumes:
   postgres_data:

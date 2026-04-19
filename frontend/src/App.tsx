@@ -77,10 +77,9 @@ function AppContent() {
           </h2>
         </div>
         {isLoading && <LoadingSpinner message="Loading your files..." />}
-        {!isLoading && files!.length > 0 && (
+        {!isLoading && files && files.length > 0 && (
           <div className="flex flex-col items-center space-y-8">
-            <FilesTable files={files!} />
-            <Input type="file">Upload a File</Input>
+            <FilesTable files={files} />
           </div>
         )}
         {!isLoading && error && (
