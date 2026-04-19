@@ -87,14 +87,18 @@ class FileStorageClient {
     return newDisplayName;
   }
 
-  async getPresignedUrl(fileName: string) {
+  async getPresignedUrl(fileName: string, expiresIn?: number | undefined) {
     const token = await this.getToken();
-    const response = await fetch(`${this.baseUrl}/urls/${fileName}`, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const expiration = expiresIn ? expiresIn.toString() : "3600";
+    const response = await fetch(
+      `${this.baseUrl}/urls/${fileName}?expires_in=${expiration}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
+    );
     if (!response.ok) {
       const details = await response.text();
       throw new Error(

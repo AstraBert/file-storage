@@ -33,4 +33,5 @@ COPY --from=builder /workspace/target/release/rest-server /usr/local/bin/rest-se
 
 EXPOSE 4444
 
+ENV RUST_LOG=debug
 CMD ["rest-server"]

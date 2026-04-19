@@ -32,7 +32,11 @@ impl FileStorageService for FileStorageServer {
             .body(body)
             .send()
             .await
-            .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?;
+            .map_err(|e| {
+                log::error!("{}", e.to_string());
+                Status::new(tonic::Code::Internal, e.to_string())
+            })?;
+        log::debug!("Successfully stored file with key: {}", &request_inner.key);
         Ok(Response::new(StoreFileResponse::default()))
     }
 
@@ -47,13 +51,21 @@ impl FileStorageService for FileStorageServer {
             .get_object()
             .bucket(&request_inner.bucket_name)
             .key(&request_inner.key)
-            .presigned(
-                PresigningConfig::expires_in(expires_in)
-                    .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?,
-            )
+            .presigned(PresigningConfig::expires_in(expires_in).map_err(|e| {
+                log::error!("{}", e.to_string());
+                Status::new(tonic::Code::Internal, e.to_string())
+            })?)
             .await
-            .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?;
+            .map_err(|e| {
+                log::error!("{}", e.to_string());
+                Status::new(tonic::Code::Internal, e.to_string())
+            })?;
 
+        log::debug!(
+            "Successfully produced presigned url with {:?}s expiration for {}",
+            request_inner.expires_in,
+            &request_inner.key
+        );
         Ok(Response::new(GetPresignedUrlResponse {
             presigned_url: presigned_request.uri().to_owned(),
         }))
@@ -65,11 +77,14 @@ impl FileStorageService for FileStorageServer {
     ) -> Result<Response<DeleteObjectResponse>, Status> {
         let request_inner = request.into_inner();
         let mut delete_object_ids: Vec<aws_sdk_s3::types::ObjectIdentifier> = vec![];
-        for obj in vec![request_inner.key] {
+        for obj in vec![request_inner.key.clone()] {
             let obj_id = aws_sdk_s3::types::ObjectIdentifier::builder()
                 .key(obj)
                 .build()
-                .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?;
+                .map_err(|e| {
+                    log::error!("{}", e.to_string());
+                    Status::new(tonic::Code::Internal, e.to_string())
+                })?;
             delete_object_ids.push(obj_id);
         }
 
@@ -80,11 +95,15 @@ impl FileStorageService for FileStorageServer {
                 aws_sdk_s3::types::Delete::builder()
                     .set_objects(Some(delete_object_ids))
                     .build()
-                    .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?,
+                    .map_err(|e| {
+                        log::error!("{}", e.to_string());
+                        Status::new(tonic::Code::Internal, e.to_string())
+                    })?,
             )
             .send()
             .await
             .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?;
+        log::debug!("Successfully deleted file with key: {}", &request_inner.key);
         Ok(Response::new(DeleteObjectResponse::default()))
     }
 }

@@ -1,6 +1,7 @@
 use std::{collections::HashMap, time::Duration};
 
-use axum::http::{HeaderMap, StatusCode};
+use anyhow::anyhow;
+use axum::http::HeaderMap;
 use brakes::{RateLimiter, backend::memcache::MemCache, types::token_bucket::TokenBucket};
 use memcache::Client;
 use serde::{Deserialize, Serialize};
@@ -95,19 +96,16 @@ pub async fn fetch_jwks(url: &str) -> Result<Jwks, reqwest::Error> {
     reqwest::get(url).await?.json().await
 }
 
-pub fn extract_token(headers: &HeaderMap) -> Result<String, StatusCode> {
+pub fn extract_token(headers: &HeaderMap) -> anyhow::Result<String> {
     if !headers.contains_key("Authorization") {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(anyhow!("No Authorization header"));
     }
-    println!("Header contains Authorization");
     let header_value = headers.get("Authorization").unwrap();
     let auth_header = header_value
         .to_str()
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    println!("Header value is a string");
+        .map_err(|_| anyhow!("Authorization error could not be converted to string"))?;
     if !auth_header.starts_with("Bearer ") {
-        return Err(StatusCode::UNAUTHORIZED);
+        return Err(anyhow!("Authorization error does not start with 'Beaerer'"));
     }
-    println!("Auth starts with 'Bearer '");
     return Ok(auth_header.strip_prefix("Bearer ").unwrap().to_string());
 }

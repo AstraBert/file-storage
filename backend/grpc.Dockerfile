@@ -28,4 +28,5 @@ COPY --from=builder /workspace/target/release/grpc-server /usr/local/bin/grpc-se
 
 EXPOSE 50051
 
+ENV RUST_LOG=debug
 CMD ["grpc-server"]

@@ -9,6 +9,7 @@ use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
     let addr = "0.0.0.0:50051".parse()?;
     let garage_access_key_id =
         env::var("GARAGE_KEY_ID").expect("GARAGE_KEY_ID should be defined in the environment");
@@ -31,12 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build();
 
     let aws_client = Client::from_conf(config);
-    println!("Created S3 client connected to Garage");
+    log::info!("Created S3 client connected to Garage");
     let server = FileStorageServer {
         client: Arc::new(aws_client),
     };
 
-    println!("Starting to serve GRPC server on port 50051");
+    log::info!("Starting to serve GRPC server on port 50051");
     Server::builder()
         .add_service(FileStorageServiceServer::new(server))
         .serve(addr)

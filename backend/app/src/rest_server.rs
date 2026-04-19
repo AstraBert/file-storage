@@ -27,10 +27,16 @@ mod redis_utils;
 mod utils;
 
 const BUCKET_NAME: &str = "files";
+const DEFAULT_AUD: &str = "account";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetFilesResponse {
     files: Vec<FileMetadata>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PresignedUrlParams {
+    expires_in: u64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -81,37 +87,57 @@ async fn auth_middleware(
     headers: HeaderMap,
     mut request: Request,
     next: Next,
-) -> Result<Response, StatusCode> {
-    let token = extract_token(&headers)?;
-    let header = decode_header(&token).map_err(|_| StatusCode::UNAUTHORIZED)?;
-    println!("Decoded header");
+) -> Result<Response, AnyHowError> {
+    let token =
+        extract_token(&headers).map_err(|e| AnyHowError(e, Some(StatusCode::UNAUTHORIZED)))?;
+    let header = decode_header(&token).map_err(|e| {
+        AnyHowError(
+            anyhow!("Impossible to decode header: {}", e.to_string()),
+            Some(StatusCode::UNAUTHORIZED),
+        )
+    })?;
 
     let jwks = fetch_jwks(&state.auth_config.jwks_verification_url())
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|e| {
+            AnyHowError(
+                anyhow!("Error while fetching JWKS: {}", e.to_string()),
+                None,
+            )
+        })?;
 
-    let kid = header.kid.ok_or(StatusCode::UNAUTHORIZED)?;
-    println!("Kid: {}", kid);
+    let kid = header.kid.ok_or(AnyHowError(
+        anyhow!("No key ID associated with JWK"),
+        Some(StatusCode::UNAUTHORIZED),
+    ))?;
     let jwk = jwks
         .keys
         .iter()
         .find(|k| k.kid.as_ref() == Some(&kid))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-    println!("Found JWK with necessary key ID");
+        .ok_or(AnyHowError(
+            anyhow!("Could not find the JWK with the necessary key ID"),
+            Some(StatusCode::UNAUTHORIZED),
+        ))?;
 
-    let decoding_key =
-        DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| {
+        AnyHowError(
+            anyhow!("Error while creating decoding the key: {}", e.to_string()),
+            None,
+        )
+    })?;
 
     let mut validation = Validation::new(Algorithm::RS256);
     validation.validate_exp = true;
-    validation.aud = Some(HashSet::from(["account".to_string()]));
+    validation.aud = Some(HashSet::from([DEFAULT_AUD.to_string()]));
 
     let token_data = decode::<Claims>(&token, &decoding_key, &validation).map_err(|e| {
-        println!("JWT decode error: {}", e.to_string());
-        StatusCode::UNAUTHORIZED
+        AnyHowError(
+            anyhow!("Error while decoding the key: {}", e.to_string()),
+            Some(StatusCode::UNAUTHORIZED),
+        )
     })?;
 
-    println!("Token data successfully validated");
+    log::debug!("Request successfully authenticated");
 
     request.extensions_mut().insert(token_data.claims);
 
@@ -119,7 +145,14 @@ async fn auth_middleware(
 }
 
 async fn get_files(State(state): State<AppState>) -> Result<Json<GetFilesResponse>, AnyHowError> {
-    let files = get_all_files_and_metadata(&state.redis_client).await?;
+    let files = get_all_files_and_metadata(&state.redis_client)
+        .await
+        .map_err(|e| {
+            log::error!("{}", e.to_string());
+            e
+        })?;
+
+    log::debug!("Successfully returned {:?} files (GET /files)", files.len());
 
     Ok(Json(GetFilesResponse { files }))
 }
@@ -128,7 +161,17 @@ async fn check_file_existence(
     State(state): State<AppState>,
     Path(display_name): Path<String>,
 ) -> Result<Json<CheckFileExistenceResponse>, AnyHowError> {
-    let file_name = check_file_existence_and_copies(&state.redis_client, &display_name).await?;
+    let file_name = check_file_existence_and_copies(&state.redis_client, &display_name)
+        .await
+        .map_err(|e| {
+            log::error!("{}", e.to_string());
+            e
+        })?;
+
+    log::debug!(
+        "File existence successfully checked for file {} (GET /checks/<display_name>)",
+        display_name
+    );
 
     Ok(Json(CheckFileExistenceResponse { file_name }))
 }
@@ -176,12 +219,20 @@ async fn post_file(
         }
     }
 
-    let file_data = file_data.ok_or(AnyHowError(
-        anyhow!("No file data available"),
-        Some(StatusCode::BAD_REQUEST),
-    ))?;
+    let file_data = file_data.ok_or_else(|| {
+        log::error!("No file data available");
+        AnyHowError(
+            anyhow!("No file data available"),
+            Some(StatusCode::BAD_REQUEST),
+        )
+    })?;
     let file_name = file_name.unwrap_or_else(|| "unknown".to_string());
     let description = description.unwrap_or_default();
+    log::debug!(
+        "Found file data (length: {:?}) for file {}",
+        file_data.len(),
+        file_name
+    );
 
     hset_file_metadata(
         &state.redis_client,
@@ -199,7 +250,12 @@ async fn post_file(
             key: file_name,
         })
         .await
-        .map_err(|e| AnyHowError(anyhow!(e.to_string()), None))?;
+        .map_err(|e| {
+            log::error!("{}", e.to_string());
+            AnyHowError(anyhow!(e.to_string()), None)
+        })?;
+
+    log::debug!("Successfully uploaded file to S3 (POST /uploads)");
 
     Ok((StatusCode::OK, "File uploaded successfully"))
 }
@@ -209,14 +265,25 @@ async fn delete_file(
     Path(display_name): Path<String>,
 ) -> Result<impl IntoResponse, AnyHowError> {
     delete_file_metadata(&state.redis_client, &display_name).await?;
+    log::debug!(
+        "Successfully deleted file from Redis for file {}",
+        &display_name
+    );
     (*state.grpc_client)
         .clone()
         .delete_object(DeleteObjectRequest {
             bucket_name: BUCKET_NAME.to_string(),
-            key: display_name,
+            key: display_name.clone(),
         })
         .await
-        .map_err(|e| AnyHowError(anyhow!(e.to_string()), None))?;
+        .map_err(|e| {
+            log::error!("{}", e.to_string());
+            AnyHowError(anyhow!(e.to_string()), None)
+        })?;
+    log::debug!(
+        "Successfully deleted file from S3 for file {} (DELETE /files/<display_name>)",
+        &display_name
+    );
 
     Ok((StatusCode::NO_CONTENT, ""))
 }
@@ -224,17 +291,24 @@ async fn delete_file(
 async fn get_file_presigned_url(
     State(state): State<AppState>,
     Path(display_name): Path<String>,
-    Query(expires_in): Query<u64>,
+    Query(params): Query<PresignedUrlParams>,
 ) -> Result<Json<GetPresignedUrlResponse>, AnyHowError> {
     let response = (*state.grpc_client)
         .clone()
         .get_presigned_url(GetPresignedUrlRequest {
             bucket_name: BUCKET_NAME.to_string(),
-            key: display_name,
-            expires_in,
+            key: display_name.clone(),
+            expires_in: params.expires_in,
         })
         .await
-        .map_err(|e| AnyHowError(anyhow!(e.to_string()), None))?;
+        .map_err(|e| {
+            log::error!("{}", e.to_string());
+            AnyHowError(anyhow!(e.to_string()), None)
+        })?;
+    log::debug!(
+        "Successfully obtained presigned URL for {} (GET /urls/<display_name>)",
+        &display_name
+    );
     Ok(Json(GetPresignedUrlResponse {
         presigned_url: response.into_inner().presigned_url,
     }))
@@ -242,16 +316,17 @@ async fn get_file_presigned_url(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    env_logger::init();
     let cache = memcache::connect("memcache://memcached:11211")?;
-    println!("Connected to memcached");
+    log::info!("Connected to memcached");
     let redis_client = redis::Client::open("redis://redis:6379")?;
-    println!("Connected to redis");
+    log::info!("Connected to redis");
     let grpc_client =
         proto::grpc::file_storage::file_storage_service_client::FileStorageServiceClient::connect(
             "http://grpc-server:50051",
         )
         .await?;
-    println!("Connected to grpc server");
+    log::info!("Connected to grpc server");
     let auth_config = Arc::new(AuthConfig::new(
         "http://keycloak:8080".to_string(),
         "file-storage".to_string(),
@@ -322,7 +397,7 @@ async fn main() -> anyhow::Result<()> {
         ))
         .with_state(app_state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:4444").await?;
-    println!("Starting to serve the rest API on port 4444");
+    log::info!("Starting to serve the rest API on port 4444");
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),

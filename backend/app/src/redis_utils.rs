@@ -25,7 +25,7 @@ impl FileMetadata {
 
         for (k, v) in hset {
             match k.as_str() {
-                "file_size" => file_size = v.parse::<usize>()?,
+                "size" => file_size = v.parse::<usize>()?,
                 "display_name" => display_name = v,
                 "file_description" => file_description = v,
                 _ => continue,

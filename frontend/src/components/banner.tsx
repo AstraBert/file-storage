@@ -1,4 +1,4 @@
-import { CircleX } from "lucide-react";
+import { CheckCheckIcon, CircleX } from "lucide-react";
 
 import {
   Item,
@@ -20,7 +20,7 @@ export function Banner(props: BannerProps) {
     <div className={`flex w-full max-w-lg flex-col gap-6 ${bg}`}>
       <Item variant="outline">
         <ItemMedia variant="icon">
-          <CircleX />
+          {props.error ? <CircleX /> : <CheckCheckIcon />}
         </ItemMedia>
         <ItemContent>
           <ItemTitle>{title}</ItemTitle>
