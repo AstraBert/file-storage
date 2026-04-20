@@ -9,7 +9,7 @@ use crate::{
 };
 use anyhow::anyhow;
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     body::Body,
     extract::{Multipart, Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
@@ -144,13 +144,19 @@ async fn auth_middleware(
     Ok(next.run(request).await)
 }
 
-async fn get_files(State(state): State<AppState>) -> Result<Json<GetFilesResponse>, AnyHowError> {
-    let files = get_all_files_and_metadata(&state.redis_client)
-        .await
-        .map_err(|e| {
-            log::error!("{}", e.to_string());
-            e
-        })?;
+async fn get_files(
+    State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
+) -> Result<Json<GetFilesResponse>, AnyHowError> {
+    let files = get_all_files_and_metadata(
+        &state.redis_client,
+        format!("{}-{}", claims.sub, claims.iss).as_str(),
+    )
+    .await
+    .map_err(|e| {
+        log::error!("{}", e.to_string());
+        e
+    })?;
 
     log::debug!("Successfully returned {:?} files (GET /files)", files.len());
 
@@ -159,14 +165,19 @@ async fn get_files(State(state): State<AppState>) -> Result<Json<GetFilesRespons
 
 async fn check_file_existence(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Path(display_name): Path<String>,
 ) -> Result<Json<CheckFileExistenceResponse>, AnyHowError> {
-    let file_name = check_file_existence_and_copies(&state.redis_client, &display_name)
-        .await
-        .map_err(|e| {
-            log::error!("{}", e.to_string());
-            e
-        })?;
+    let file_name = check_file_existence_and_copies(
+        &state.redis_client,
+        format!("{}-{}", claims.sub, claims.iss).as_str(),
+        &display_name,
+    )
+    .await
+    .map_err(|e| {
+        log::error!("{}", e.to_string());
+        e
+    })?;
 
     log::debug!(
         "File existence successfully checked for file {} (GET /checks/<display_name>)",
@@ -178,6 +189,7 @@ async fn check_file_existence(
 
 async fn post_file(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, AnyHowError> {
     let mut file_data: Option<Vec<u8>> = None;
@@ -237,6 +249,7 @@ async fn post_file(
     hset_file_metadata(
         &state.redis_client,
         &file_name,
+        format!("{}-{}", claims.sub, claims.iss).as_str(),
         file_data.len(),
         &description,
     )
@@ -247,7 +260,7 @@ async fn post_file(
         .store_file(StoreFileRequest {
             file_data,
             bucket_name: BUCKET_NAME.to_string(),
-            key: file_name,
+            key: format!("{}-{}-{}", claims.sub, claims.iss, file_name),
         })
         .await
         .map_err(|e| {
@@ -262,9 +275,15 @@ async fn post_file(
 
 async fn delete_file(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Path(display_name): Path<String>,
 ) -> Result<impl IntoResponse, AnyHowError> {
-    delete_file_metadata(&state.redis_client, &display_name).await?;
+    delete_file_metadata(
+        &state.redis_client,
+        format!("{}-{}", claims.sub, claims.iss).as_str(),
+        &display_name,
+    )
+    .await?;
     log::debug!(
         "Successfully deleted file from Redis for file {}",
         &display_name
@@ -273,7 +292,7 @@ async fn delete_file(
         .clone()
         .delete_object(DeleteObjectRequest {
             bucket_name: BUCKET_NAME.to_string(),
-            key: display_name.clone(),
+            key: format!("{}-{}-{}", claims.sub, claims.iss, &display_name),
         })
         .await
         .map_err(|e| {
@@ -290,6 +309,7 @@ async fn delete_file(
 
 async fn get_file_presigned_url(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Path(display_name): Path<String>,
     Query(params): Query<PresignedUrlParams>,
 ) -> Result<Json<GetPresignedUrlResponse>, AnyHowError> {
@@ -297,7 +317,7 @@ async fn get_file_presigned_url(
         .clone()
         .get_presigned_url(GetPresignedUrlRequest {
             bucket_name: BUCKET_NAME.to_string(),
-            key: display_name.clone(),
+            key: format!("{}-{}-{}", claims.sub, claims.iss, &display_name),
             expires_in: params.expires_in,
         })
         .await

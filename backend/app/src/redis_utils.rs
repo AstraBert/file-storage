@@ -43,13 +43,14 @@ impl FileMetadata {
 pub async fn hset_file_metadata(
     client: &redis::Client,
     display_name: &str,
+    user_identifier: &str,
     file_size: usize,
     file_description: &str,
 ) -> Result<()> {
     let mut conn = client.get_multiplexed_async_connection().await?;
 
     conn.hset_multiple(
-        format!("file:{}", display_name),
+        format!("{}-file:{}", user_identifier, display_name),
         &[
             ("display_name", display_name),
             ("size", &file_size.to_string()),
@@ -62,10 +63,13 @@ pub async fn hset_file_metadata(
 
 pub async fn check_file_existence_and_copies(
     client: &redis::Client,
+    user_identifier: &str,
     display_name: &str,
 ) -> Result<String> {
     let mut conn = client.get_multiplexed_async_connection().await?;
-    let result = conn.exists(format!("file:{}", display_name)).await?;
+    let result = conn
+        .exists(format!("{}-file:{}", user_identifier, display_name))
+        .await?;
     if result {
         let p = path::PathBuf::from(display_name);
         let stem = p.file_stem().unwrap();
@@ -89,12 +93,15 @@ pub async fn check_file_existence_and_copies(
     Ok(display_name.to_string())
 }
 
-pub async fn get_all_files_and_metadata(client: &redis::Client) -> Result<Vec<FileMetadata>> {
+pub async fn get_all_files_and_metadata(
+    client: &redis::Client,
+    user_identifier: &str,
+) -> Result<Vec<FileMetadata>> {
     let mut conn = client.get_multiplexed_async_connection().await?;
     let mut files: Vec<FileMetadata> = Vec::new();
 
     let keys: Vec<String> = conn
-        .scan_match("file:*")
+        .scan_match(format!("{}-file:*", user_identifier))
         .await?
         .map(|r| r.unwrap())
         .collect()
@@ -109,8 +116,13 @@ pub async fn get_all_files_and_metadata(client: &redis::Client) -> Result<Vec<Fi
     Ok(files)
 }
 
-pub async fn delete_file_metadata(client: &redis::Client, display_name: &str) -> Result<()> {
+pub async fn delete_file_metadata(
+    client: &redis::Client,
+    user_identifier: &str,
+    display_name: &str,
+) -> Result<()> {
     let mut conn = client.get_multiplexed_async_connection().await?;
-    conn.del(format!("file:{}", display_name)).await?;
+    conn.del(format!("{}-file:{}", user_identifier, display_name))
+        .await?;
     Ok(())
 }
