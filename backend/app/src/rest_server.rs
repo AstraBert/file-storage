@@ -19,6 +19,7 @@ use axum::{
 };
 use brakes::middleware::tower::TowerRateLimiterLayer;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use observability::init_tracing_subscriber;
 use proto::grpc::file_storage::{DeleteObjectRequest, GetPresignedUrlRequest, StoreFileRequest};
 use serde::{Deserialize, Serialize};
 use tonic::transport::Channel;
@@ -337,6 +338,7 @@ async fn get_file_presigned_url(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     env_logger::init();
+    let _guard = init_tracing_subscriber();
     let cache = memcache::connect("memcache://memcached:11211")?;
     log::info!("Connected to memcached");
     let redis_client = redis::Client::open("redis://redis:6379")?;

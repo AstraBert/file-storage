@@ -7,6 +7,7 @@ edition = "2024"
 axum = { version = "0.8.8", features = ["multipart"]}
 brakes = { version = "0.1.1", features = ["memcache", "tower"] }
 proto = { path = "../proto" }
+observability = { path = "../observability" }
 redis = { version = "1.2.0", features = ["tokio-comp", "r2d2"] }
 tokio = { version = "1.51.1", features = ["rt-multi-thread", "macros"] }
 tower-http = { version = "0.6.8", features = ["fs", "cors"] }

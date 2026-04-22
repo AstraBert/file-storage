@@ -17,13 +17,23 @@ pub struct FileStorageServer {
     pub client: Arc<Client>,
 }
 
+const STATUS_STARTED: &str = "started";
+const STATUS_COMPLETED: &str = "completed";
+const STATUS_FAILED: &str = "failed";
+
 #[tonic::async_trait]
 impl FileStorageService for FileStorageServer {
+    #[tracing::instrument]
     async fn store_file(
         &self,
         request: Request<StoreFileRequest>,
     ) -> Result<Response<StoreFileResponse>, Status> {
         let request_inner = request.into_inner();
+        tracing::info!(
+            event = "store_file",
+            status = STATUS_STARTED,
+            file = request_inner.key,
+        );
         let body = aws_sdk_s3::primitives::ByteStream::from(request_inner.file_data);
         self.client
             .put_object()
@@ -33,18 +43,36 @@ impl FileStorageService for FileStorageServer {
             .send()
             .await
             .map_err(|e| {
+                tracing::error!(
+                    event = "store_file",
+                    status = STATUS_FAILED,
+                    file = request_inner.key,
+                    error = e.to_string(),
+                );
                 log::error!("{}", e.to_string());
                 Status::new(tonic::Code::Internal, e.to_string())
             })?;
+        tracing::info!(
+            event = "store_file",
+            status = STATUS_COMPLETED,
+            file = request_inner.key,
+        );
         log::debug!("Successfully stored file with key: {}", &request_inner.key);
         Ok(Response::new(StoreFileResponse::default()))
     }
 
+    #[tracing::instrument]
     async fn get_presigned_url(
         &self,
         request: Request<GetPresignedUrlRequest>,
     ) -> Result<Response<GetPresignedUrlResponse>, Status> {
         let request_inner = request.into_inner();
+        tracing::info!(
+            event = "get_presigned_url",
+            status = STATUS_STARTED,
+            file = request_inner.key,
+            expires_in = request_inner.expires_in,
+        );
         let expires_in = Duration::from_secs(request_inner.expires_in);
         let presigned_request = self
             .client
@@ -58,6 +86,13 @@ impl FileStorageService for FileStorageServer {
             .await
             .map_err(|e| {
                 log::error!("{}", e.to_string());
+                tracing::error!(
+                    event = "get_presigned_url",
+                    status = STATUS_FAILED,
+                    file = request_inner.key,
+                    expires_in = request_inner.expires_in,
+                    error = e.to_string(),
+                );
                 Status::new(tonic::Code::Internal, e.to_string())
             })?;
 
@@ -66,16 +101,28 @@ impl FileStorageService for FileStorageServer {
             request_inner.expires_in,
             &request_inner.key
         );
+        tracing::info!(
+            event = "get_presigned_url",
+            status = STATUS_COMPLETED,
+            file = request_inner.key,
+            expires_in = request_inner.expires_in,
+        );
         Ok(Response::new(GetPresignedUrlResponse {
             presigned_url: presigned_request.uri().to_owned(),
         }))
     }
 
+    #[tracing::instrument]
     async fn delete_object(
         &self,
         request: Request<DeleteObjectRequest>,
     ) -> Result<Response<DeleteObjectResponse>, Status> {
         let request_inner = request.into_inner();
+        tracing::info!(
+            event = "delete_object",
+            status = STATUS_STARTED,
+            file = request_inner.key,
+        );
         let mut delete_object_ids: Vec<aws_sdk_s3::types::ObjectIdentifier> = vec![];
         for obj in vec![request_inner.key.clone()] {
             let obj_id = aws_sdk_s3::types::ObjectIdentifier::builder()
@@ -83,6 +130,12 @@ impl FileStorageService for FileStorageServer {
                 .build()
                 .map_err(|e| {
                     log::error!("{}", e.to_string());
+                    tracing::error!(
+                        event = "delete_object",
+                        status = STATUS_FAILED,
+                        file = request_inner.key,
+                        error = e.to_string(),
+                    );
                     Status::new(tonic::Code::Internal, e.to_string())
                 })?;
             delete_object_ids.push(obj_id);
@@ -97,12 +150,32 @@ impl FileStorageService for FileStorageServer {
                     .build()
                     .map_err(|e| {
                         log::error!("{}", e.to_string());
+                        tracing::error!(
+                            event = "delete_object",
+                            status = STATUS_FAILED,
+                            file = request_inner.key,
+                            error = e.to_string(),
+                        );
                         Status::new(tonic::Code::Internal, e.to_string())
                     })?,
             )
             .send()
             .await
-            .map_err(|e| Status::new(tonic::Code::Internal, e.to_string()))?;
+            .map_err(|e| {
+                log::error!("{}", e.to_string());
+                tracing::error!(
+                    event = "delete_object",
+                    status = STATUS_FAILED,
+                    file = request_inner.key,
+                    error = e.to_string(),
+                );
+                Status::new(tonic::Code::Internal, e.to_string())
+            })?;
+        tracing::info!(
+            event = "delete_object",
+            status = STATUS_COMPLETED,
+            file = request_inner.key,
+        );
         log::debug!("Successfully deleted file with key: {}", &request_inner.key);
         Ok(Response::new(DeleteObjectResponse::default()))
     }

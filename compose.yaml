@@ -109,6 +109,7 @@ services:
     depends_on:
       - garage
       - keycloak
+      - jaeger
 
   frontend:
     image: file-storage-frontend
@@ -123,6 +124,19 @@ services:
     depends_on:
       - keycloak
       - rest-server
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: jaeger
+    ports:
+      - 16686:16686
+      - 4317:4317
+      - 4318:4318
+      - 9411:9411
+    environment:
+      - COLLECTOR_ZIPKIN_HOST_PORT=:9411
+    networks:
+      - keycloak_network
 
 volumes:
   postgres_data:
