@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use aws_sdk_s3::config::{Credentials, Region};
 use aws_sdk_s3::{Client, Config};
+use observability::init_tracing_subscriber;
 use proto::FileStorageServer;
 use proto::grpc::file_storage::file_storage_service_server::FileStorageServiceServer;
 use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    env_logger::init();
+    let _guard = init_tracing_subscriber();
     let addr = "0.0.0.0:50051".parse()?;
     let garage_access_key_id =
         env::var("GARAGE_KEY_ID").expect("GARAGE_KEY_ID should be defined in the environment");

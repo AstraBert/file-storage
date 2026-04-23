@@ -29,6 +29,9 @@ mod utils;
 
 const BUCKET_NAME: &str = "files";
 const DEFAULT_AUD: &str = "account";
+const STATUS_STARTED: &str = "started";
+const STATUS_COMPLETED: &str = "completed";
+const STATUS_FAILED: &str = "failed";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetFilesResponse {
@@ -83,15 +86,30 @@ struct AppState {
     auth_config: Arc<AuthConfig>,
 }
 
+#[tracing::instrument(skip_all, name = "auth_middleware")]
 async fn auth_middleware(
     State(state): State<AppState>,
     headers: HeaderMap,
     mut request: Request,
     next: Next,
 ) -> Result<Response, AnyHowError> {
-    let token =
-        extract_token(&headers).map_err(|e| AnyHowError(e, Some(StatusCode::UNAUTHORIZED)))?;
+    tracing::info!(event = "auth_middleware", status = STATUS_STARTED,);
+
+    let token = extract_token(&headers).map_err(|e| {
+        tracing::error!(
+            event = "auth_middleware",
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
+        AnyHowError(e, Some(StatusCode::UNAUTHORIZED))
+    })?;
+
     let header = decode_header(&token).map_err(|e| {
+        tracing::error!(
+            event = "auth_middleware",
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
         AnyHowError(
             anyhow!("Impossible to decode header: {}", e.to_string()),
             Some(StatusCode::UNAUTHORIZED),
@@ -101,26 +119,51 @@ async fn auth_middleware(
     let jwks = fetch_jwks(&state.auth_config.jwks_verification_url())
         .await
         .map_err(|e| {
+            tracing::error!(
+                event = "auth_middleware",
+                error = e.to_string(),
+                status = STATUS_FAILED,
+            );
             AnyHowError(
                 anyhow!("Error while fetching JWKS: {}", e.to_string()),
                 None,
             )
         })?;
 
-    let kid = header.kid.ok_or(AnyHowError(
-        anyhow!("No key ID associated with JWK"),
-        Some(StatusCode::UNAUTHORIZED),
-    ))?;
+    let kid = header.kid.ok_or_else(|| {
+        tracing::error!(
+            event = "auth_middleware",
+            error = "No key ID associated with JWK",
+            status = STATUS_FAILED,
+        );
+        AnyHowError(
+            anyhow!("No key ID associated with JWK"),
+            Some(StatusCode::UNAUTHORIZED),
+        )
+    })?;
+
     let jwk = jwks
         .keys
         .iter()
         .find(|k| k.kid.as_ref() == Some(&kid))
-        .ok_or(AnyHowError(
-            anyhow!("Could not find the JWK with the necessary key ID"),
-            Some(StatusCode::UNAUTHORIZED),
-        ))?;
+        .ok_or_else(|| {
+            tracing::error!(
+                event = "auth_middleware",
+                error = "Could not find the JWK with the necessary key ID",
+                status = STATUS_FAILED,
+            );
+            AnyHowError(
+                anyhow!("Could not find the JWK with the necessary key ID"),
+                Some(StatusCode::UNAUTHORIZED),
+            )
+        })?;
 
     let decoding_key = DecodingKey::from_rsa_components(&jwk.n, &jwk.e).map_err(|e| {
+        tracing::error!(
+            event = "auth_middleware",
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
         AnyHowError(
             anyhow!("Error while creating decoding the key: {}", e.to_string()),
             None,
@@ -132,6 +175,11 @@ async fn auth_middleware(
     validation.aud = Some(HashSet::from([DEFAULT_AUD.to_string()]));
 
     let token_data = decode::<Claims>(&token, &decoding_key, &validation).map_err(|e| {
+        tracing::error!(
+            event = "auth_middleware",
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
         AnyHowError(
             anyhow!("Error while decoding the key: {}", e.to_string()),
             Some(StatusCode::UNAUTHORIZED),
@@ -139,16 +187,19 @@ async fn auth_middleware(
     })?;
 
     log::debug!("Request successfully authenticated");
+    tracing::info!(event = "auth_middleware", status = STATUS_COMPLETED,);
 
     request.extensions_mut().insert(token_data.claims);
 
     Ok(next.run(request).await)
 }
 
+#[tracing::instrument]
 async fn get_files(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
 ) -> Result<Json<GetFilesResponse>, AnyHowError> {
+    tracing::info!(event = "get_files_rest", status = STATUS_STARTED,);
     let files = get_all_files_and_metadata(
         &state.redis_client,
         format!("{}-{}", claims.sub, claims.iss).as_str(),
@@ -156,19 +207,35 @@ async fn get_files(
     .await
     .map_err(|e| {
         log::error!("{}", e.to_string());
+        tracing::error!(
+            event = "get_files_rest",
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
         e
     })?;
 
+    tracing::info!(
+        event = "get_files_rest",
+        count = files.len(),
+        status = STATUS_COMPLETED,
+    );
     log::debug!("Successfully returned {:?} files (GET /files)", files.len());
 
     Ok(Json(GetFilesResponse { files }))
 }
 
+#[tracing::instrument]
 async fn check_file_existence(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(display_name): Path<String>,
 ) -> Result<Json<CheckFileExistenceResponse>, AnyHowError> {
+    tracing::info!(
+        event = "check_file_existence_rest",
+        file = display_name,
+        status = STATUS_STARTED,
+    );
     let file_name = check_file_existence_and_copies(
         &state.redis_client,
         format!("{}-{}", claims.sub, claims.iss).as_str(),
@@ -177,9 +244,20 @@ async fn check_file_existence(
     .await
     .map_err(|e| {
         log::error!("{}", e.to_string());
+        tracing::error!(
+            event = "check_file_existence_rest",
+            file = display_name,
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
         e
     })?;
 
+    tracing::info!(
+        event = "check_file_existence_rest",
+        file = display_name,
+        status = STATUS_COMPLETED,
+    );
     log::debug!(
         "File existence successfully checked for file {} (GET /checks/<display_name>)",
         display_name
@@ -188,11 +266,13 @@ async fn check_file_existence(
     Ok(Json(CheckFileExistenceResponse { file_name }))
 }
 
+#[tracing::instrument]
 async fn post_file(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     mut multipart: Multipart,
 ) -> Result<impl IntoResponse, AnyHowError> {
+    tracing::info!(event = "post_file_rest", status = STATUS_STARTED,);
     let mut file_data: Option<Vec<u8>> = None;
     let mut file_name: Option<String> = None;
     let mut description: Option<String> = None;
@@ -226,14 +306,17 @@ async fn post_file(
                     AnyHowError(anyhow!(e.to_string()), Some(StatusCode::BAD_REQUEST))
                 })?);
             }
-            _ => {
-                // Skip unknown fields
-            }
+            _ => {}
         }
     }
 
     let file_data = file_data.ok_or_else(|| {
         log::error!("No file data available");
+        tracing::error!(
+            event = "post_file_rest",
+            error = "No file data available",
+            status = STATUS_FAILED,
+        );
         AnyHowError(
             anyhow!("No file data available"),
             Some(StatusCode::BAD_REQUEST),
@@ -254,7 +337,16 @@ async fn post_file(
         file_data.len(),
         &description,
     )
-    .await?;
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            event = "post_file_rest",
+            file = file_name,
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
+        e
+    })?;
 
     (*state.grpc_client)
         .clone()
@@ -266,29 +358,57 @@ async fn post_file(
         .await
         .map_err(|e| {
             log::error!("{}", e.to_string());
+            tracing::error!(
+                event = "post_file_rest",
+                file = file_name,
+                error = e.to_string(),
+                status = STATUS_FAILED,
+            );
             AnyHowError(anyhow!(e.to_string()), None)
         })?;
 
+    tracing::info!(
+        event = "post_file_rest",
+        file = file_name,
+        status = STATUS_COMPLETED,
+    );
     log::debug!("Successfully uploaded file to S3 (POST /uploads)");
 
     Ok((StatusCode::OK, "File uploaded successfully"))
 }
 
+#[tracing::instrument]
 async fn delete_file(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(display_name): Path<String>,
 ) -> Result<impl IntoResponse, AnyHowError> {
+    tracing::info!(
+        event = "delete_file_rest",
+        file = display_name,
+        status = STATUS_STARTED,
+    );
     delete_file_metadata(
         &state.redis_client,
         format!("{}-{}", claims.sub, claims.iss).as_str(),
         &display_name,
     )
-    .await?;
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            event = "delete_file_rest",
+            file = display_name,
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
+        e
+    })?;
+
     log::debug!(
         "Successfully deleted file from Redis for file {}",
         &display_name
     );
+
     (*state.grpc_client)
         .clone()
         .delete_object(DeleteObjectRequest {
@@ -298,8 +418,20 @@ async fn delete_file(
         .await
         .map_err(|e| {
             log::error!("{}", e.to_string());
+            tracing::error!(
+                event = "delete_file_rest",
+                file = display_name,
+                error = e.to_string(),
+                status = STATUS_FAILED,
+            );
             AnyHowError(anyhow!(e.to_string()), None)
         })?;
+
+    tracing::info!(
+        event = "delete_file_rest",
+        file = display_name,
+        status = STATUS_COMPLETED,
+    );
     log::debug!(
         "Successfully deleted file from S3 for file {} (DELETE /files/<display_name>)",
         &display_name
@@ -308,12 +440,19 @@ async fn delete_file(
     Ok((StatusCode::NO_CONTENT, ""))
 }
 
+#[tracing::instrument]
 async fn get_file_presigned_url(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Path(display_name): Path<String>,
     Query(params): Query<PresignedUrlParams>,
 ) -> Result<Json<GetPresignedUrlResponse>, AnyHowError> {
+    tracing::info!(
+        event = "get_file_presigned_url_rest",
+        file = display_name,
+        expiration = params.expires_in,
+        status = STATUS_STARTED,
+    );
     let response = (*state.grpc_client)
         .clone()
         .get_presigned_url(GetPresignedUrlRequest {
@@ -324,11 +463,24 @@ async fn get_file_presigned_url(
         .await
         .map_err(|e| {
             log::error!("{}", e.to_string());
+            tracing::error!(
+                event = "get_file_presigned_url_rest",
+                file = display_name,
+                expiration = params.expires_in,
+                error = e.to_string(),
+                status = STATUS_FAILED,
+            );
             AnyHowError(anyhow!(e.to_string()), None)
         })?;
     log::debug!(
         "Successfully obtained presigned URL for {} (GET /urls/<display_name>)",
         &display_name
+    );
+    tracing::info!(
+        event = "get_file_presigned_url_rest",
+        file = display_name,
+        expiration = params.expires_in,
+        status = STATUS_COMPLETED,
     );
     Ok(Json(GetPresignedUrlResponse {
         presigned_url: response.into_inner().presigned_url,
@@ -337,7 +489,6 @@ async fn get_file_presigned_url(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::init();
     let _guard = init_tracing_subscriber();
     let cache = memcache::connect("memcache://memcached:11211")?;
     log::info!("Connected to memcached");

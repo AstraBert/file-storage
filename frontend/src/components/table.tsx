@@ -10,7 +10,7 @@ import {
 import { getFileStorageClient } from "@/client/api-client";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Download, Trash, Copy, Check } from "lucide-react";
+import { Trash, Copy, Check, Share2Icon } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import {
   Dialog,
@@ -19,10 +19,25 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import type { QueryClient } from "@tanstack/react-query";
 
 export type FilesTableProps = {
   files: FileMetadata[];
+  queryClient: QueryClient;
 };
+
+function formatFileSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+
+  const units = ["B", "kB", "MB", "GB", "TB"];
+  const exponent = Math.min(
+    Math.floor(Math.log10(bytes) / 3),
+    units.length - 1,
+  );
+  const value = bytes / Math.pow(1000, exponent);
+
+  return `${parseFloat(value.toFixed(1))} ${units[exponent]}`;
+}
 
 export function FilesTable(props: FilesTableProps) {
   const client = getFileStorageClient();
@@ -43,6 +58,7 @@ export function FilesTable(props: FilesTableProps) {
   const handleDelete = async (displayName: string) => {
     try {
       await client.deleteFile(displayName);
+      await props.queryClient.invalidateQueries({ queryKey: ["files"] });
       toast("File deleted", {
         description: `"${displayName}" was successfully deleted.`,
       });
@@ -75,7 +91,7 @@ export function FilesTable(props: FilesTableProps) {
           {props.files.map((file) => (
             <TableRow key={file.display_name}>
               <TableCell className="font-medium">{file.display_name}</TableCell>
-              <TableCell>{file.file_size}</TableCell>
+              <TableCell>{formatFileSize(file.file_size)}</TableCell>
               <TableCell className="text-right">
                 {file.file_description}
               </TableCell>
@@ -85,7 +101,7 @@ export function FilesTable(props: FilesTableProps) {
                   className="cursor-pointer"
                   onClick={() => handleGetUrl(file.display_name)}
                 >
-                  <Download />
+                  <Share2Icon />
                 </Button>
                 <Button
                   variant="outline"
@@ -103,7 +119,7 @@ export function FilesTable(props: FilesTableProps) {
       <Dialog open={!!url} onOpenChange={(open) => !open && setUrl(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Presigned URL</DialogTitle>
+            <DialogTitle>Share Link</DialogTitle>
           </DialogHeader>
           <div className="flex gap-2 items-center">
             <Input value={url ?? ""} readOnly className="font-mono text-sm" />

@@ -96,6 +96,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tower-http",
+ "tracing",
 ]
 
 [[package]]

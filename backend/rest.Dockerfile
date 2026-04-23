@@ -16,6 +16,7 @@ COPY Cargo.toml Cargo.lock ./
 # Copy both workspace members
 COPY app/  app/
 COPY proto/ proto/
+COPY observability/ observability/
 COPY proto-definitions/ proto-definitions/
 
 # Build only the rest-server binary in release mode

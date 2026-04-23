@@ -15,6 +15,7 @@ const queryClient = new QueryClient();
 function AppContent() {
   const client = getFileStorageClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
   const [fileDescription, setFileDescription] = useState<string>("");
   const [uploading, setUploading] = useState<boolean>(false);
@@ -38,6 +39,7 @@ function AppContent() {
     setFile(null);
     setFileDescription("");
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (descriptionRef.current) descriptionRef.current.value = "";
   };
 
   const handleDescriptionChange = (
@@ -51,6 +53,7 @@ function AppContent() {
     setUploading(true);
     try {
       await client.uploadFile(file, fileDescription);
+      await queryClient.invalidateQueries({ queryKey: ["files"] });
       setUploadingSuccess("File successfully uploaded");
       setTimeout(() => {
         setUploadingSuccess(null);
@@ -79,7 +82,7 @@ function AppContent() {
         {isLoading && <LoadingSpinner message="Loading your files..." />}
         {!isLoading && files && files.length > 0 && (
           <div className="flex flex-col items-center space-y-8">
-            <FilesTable files={files} />
+            <FilesTable files={files} queryClient={queryClient} />
           </div>
         )}
         {!isLoading && error && (
@@ -119,6 +122,7 @@ function AppContent() {
             <Input
               type="text"
               onChange={handleDescriptionChange}
+              ref={descriptionRef}
               id="description"
               name="description"
               placeholder="Insert file description here"

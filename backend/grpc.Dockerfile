@@ -12,6 +12,7 @@ WORKDIR /workspace
 COPY Cargo.toml Cargo.lock ./
 COPY app/  app/
 COPY proto/ proto/
+COPY observability/ observability/
 COPY proto-definitions/ proto-definitions/
 
 RUN cargo build --release --bin grpc-server
