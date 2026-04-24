@@ -126,3 +126,70 @@ pub async fn delete_file_metadata(
         .await?;
     Ok(())
 }
+
+pub async fn check_index_exists(client: &redis::Client, user_identifier: &str) -> Result<bool> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let result: redis::RedisResult<redis::Value> = redis::cmd("FT.info")
+        .arg(user_identifier)
+        .query_async(&mut conn)
+        .await;
+    match result {
+        Ok(_) => Ok(true),
+        Err(_) => Ok(false),
+    }
+}
+
+pub async fn create_search_index(client: &redis::Client, user_identifier: &str) -> Result<()> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let _: redis::Value = redis::cmd("FT.CREATE")
+        .arg(user_identifier)
+        .arg("ON")
+        .arg("HASH")
+        .arg("PREFIX")
+        .arg(1)
+        .arg(format!("{}-file:", user_identifier))
+        .arg("SCHEMA")
+        .arg("display_name")
+        .arg("TEXT")
+        .arg("file_description")
+        .arg("TEXT")
+        .query_async(&mut conn)
+        .await?;
+    Ok(())
+}
+
+pub async fn full_text_search_description(
+    client: &redis::Client,
+    user_identifier: &str,
+    search_term: &str,
+) -> Result<()> {
+    let exists = check_index_exists(client, user_identifier).await?;
+    if !exists {
+        create_search_index(client, user_identifier).await?;
+    }
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let _search_result: redis::Value = redis::cmd("FT.SEARCH")
+        .arg(user_identifier)
+        .arg(format!("@file_description:\"{}\"", search_term))
+        .query_async(&mut conn)
+        .await?;
+    Ok(())
+}
+
+pub async fn full_text_search_title(
+    client: &redis::Client,
+    user_identifier: &str,
+    search_term: &str,
+) -> Result<()> {
+    let exists = check_index_exists(client, user_identifier).await?;
+    if !exists {
+        create_search_index(client, user_identifier).await?;
+    }
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let _search_result: redis::Value = redis::cmd("FT.SEARCH")
+        .arg(user_identifier)
+        .arg(format!("@display_name:\"{}\"", search_term))
+        .query_async(&mut conn)
+        .await?;
+    Ok(())
+}
