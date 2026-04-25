@@ -1,11 +1,8 @@
-use std::{collections::HashSet, net::SocketAddr, sync::Arc};
+use std::{collections::HashSet, fmt, net::SocketAddr, sync::Arc};
 
-use crate::{
-    redis_utils::{
-        FileMetadata, check_file_existence_and_copies, delete_file_metadata,
-        get_all_files_and_metadata, hset_file_metadata,
-    },
-    utils::{AuthConfig, Claims, build_rate_limiter, extract_token, fetch_jwks},
+use crate::redis_utils::{
+    FileMetadata, check_file_existence_and_copies, delete_file_metadata,
+    get_all_files_and_metadata, hset_file_metadata,
 };
 use anyhow::anyhow;
 use axum::{
@@ -21,13 +18,19 @@ use brakes::middleware::tower::TowerRateLimiterLayer;
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use observability::init_tracing_subscriber;
 use proto::grpc::file_storage::{DeleteObjectRequest, GetPresignedUrlRequest, StoreFileRequest};
+use rabbitmq_stream_client::{
+    Environment, NoDedup, Producer,
+    error::StreamCreateError,
+    types::{ByteCapacity, Message, ResponseCode},
+};
 use serde::{Deserialize, Serialize};
 use tonic::transport::Channel;
+use utils::{AnyHowError, AuthConfig, Claims, build_rate_limiter, extract_token, fetch_jwks};
 
 mod redis_utils;
-mod utils;
 
 const BUCKET_NAME: &str = "files";
+const STREAM_NAME: &str = "worker_queue";
 const DEFAULT_AUD: &str = "account";
 const STATUS_STARTED: &str = "started";
 const STATUS_COMPLETED: &str = "completed";
@@ -53,27 +56,18 @@ struct CheckFileExistenceResponse {
     file_name: String,
 }
 
-struct AnyHowError(anyhow::Error, Option<StatusCode>);
-
-// Tell axum how to convert `AnyHowError` into a response.
-impl IntoResponse for AnyHowError {
-    fn into_response(self) -> Response {
-        (
-            self.1.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-            format!("Something went wrong: {}", self.0),
-        )
-            .into_response()
-    }
+#[derive(Debug, Serialize, Deserialize)]
+struct MessageData {
+    content: String,
+    user_identity: String,
 }
 
-// This enables using `?` on functions that return `Result<_, anyhow::Error>` to turn them into
-// `Result<_, AnyHowError>`. That way you don't need to do that manually.
-impl<E> From<E> for AnyHowError
-where
-    E: Into<anyhow::Error>,
-{
-    fn from(err: E) -> Self {
-        Self(err.into(), None)
+#[derive(Clone)]
+pub struct DebuggableProducer(pub Arc<Producer<NoDedup>>);
+
+impl fmt::Debug for DebuggableProducer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Producer<NoDedup>")
     }
 }
 
@@ -84,6 +78,7 @@ struct AppState {
         proto::grpc::file_storage::file_storage_service_client::FileStorageServiceClient<Channel>,
     >,
     auth_config: Arc<AuthConfig>,
+    rabbitmq_producer: DebuggableProducer,
 }
 
 #[tracing::instrument(skip_all, name = "auth_middleware")]
@@ -367,6 +362,15 @@ async fn post_file(
             AnyHowError(anyhow!(e.to_string()), None)
         })?;
 
+    let data = MessageData {
+        content: format!("{}\n\n{}", &file_name, &description),
+        user_identity: format!("{}-{}", claims.sub, claims.iss),
+    };
+    let message = serde_json::to_string(&data)?;
+    let msg = Message::builder().body(message).build();
+    state.rabbitmq_producer.0.send(msg, |_| async {}).await?;
+    log::debug!("Sent data to RabbitMQ");
+
     tracing::info!(
         event = "post_file_rest",
         file = file_name,
@@ -500,6 +504,28 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
     log::info!("Connected to grpc server");
+    let environment = Environment::builder().build().await?;
+
+    // create the rabbitmq stream if it does not already exist
+    let create_response = environment
+        .stream_creator()
+        .max_length(ByteCapacity::GB(5))
+        .create(STREAM_NAME)
+        .await;
+
+    if let Err(StreamCreateError::Create { stream: _, status }) = create_response {
+        match status {
+            // we can ignore this error because the stream already exists
+            ResponseCode::StreamAlreadyExists => {
+                log::info!("Stream already exists")
+            }
+            err => {
+                log::error!("Error creating stream: {:?} {:?}", STREAM_NAME, err);
+            }
+        }
+    }
+    let producer = environment.producer().build(STREAM_NAME).await.unwrap();
+    log::info!("Connected to RabbitMQ stream");
     let auth_config = Arc::new(AuthConfig::new(
         "http://keycloak:8080".to_string(),
         "file-storage".to_string(),
@@ -508,6 +534,7 @@ async fn main() -> anyhow::Result<()> {
         redis_client: Arc::new(redis_client),
         grpc_client: Arc::new(grpc_client),
         auth_config: auth_config,
+        rabbitmq_producer: DebuggableProducer(Arc::new(producer)),
     };
     let post_rl = build_rate_limiter(&cache, 100);
     let delete_rl = build_rate_limiter(&cache, 100);

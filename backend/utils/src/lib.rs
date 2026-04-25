@@ -1,9 +1,13 @@
 use std::{collections::HashMap, time::Duration};
 
 use anyhow::anyhow;
-use axum::http::HeaderMap;
+use axum::{
+    http::HeaderMap,
+    response::{IntoResponse, Response},
+};
 use brakes::{RateLimiter, backend::memcache::MemCache, types::token_bucket::TokenBucket};
 use memcache::Client;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
 pub fn build_rate_limiter(cache: &Client, rps: u32) -> RateLimiter<TokenBucket, MemCache> {
@@ -108,4 +112,28 @@ pub fn extract_token(headers: &HeaderMap) -> anyhow::Result<String> {
         return Err(anyhow!("Authorization error does not start with 'Beaerer'"));
     }
     return Ok(auth_header.strip_prefix("Bearer ").unwrap().to_string());
+}
+
+pub struct AnyHowError(pub anyhow::Error, pub Option<StatusCode>);
+
+// Tell axum how to convert `AnyHowError` into a response.
+impl IntoResponse for AnyHowError {
+    fn into_response(self) -> Response {
+        (
+            self.1.unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            format!("Something went wrong: {}", self.0),
+        )
+            .into_response()
+    }
+}
+
+// This enables using `?` on functions that return `Result<_, anyhow::Error>` to turn them into
+// `Result<_, AnyHowError>`. That way you don't need to do that manually.
+impl<E> From<E> for AnyHowError
+where
+    E: Into<anyhow::Error>,
+{
+    fn from(err: E) -> Self {
+        Self(err.into(), None)
+    }
 }

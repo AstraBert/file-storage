@@ -8,6 +8,7 @@ axum = { version = "0.8.8", features = ["multipart"]}
 brakes = { version = "0.1.1", features = ["memcache", "tower"] }
 proto = { path = "../proto" }
 observability = { path = "../observability" }
+utils = { path = "../utils" }
 redis = { version = "1.2.0", features = ["tokio-comp", "r2d2"] }
 tokio = { version = "1.51.1", features = ["rt-multi-thread", "macros"] }
 tower-http = { version = "0.6.8", features = ["fs", "cors"] }
@@ -24,6 +25,7 @@ serde_json = "1.0.149"
 log = "0.4.29"
 env_logger = "0.11.10"
 tracing = "0.1.44"
+rabbitmq-stream-client = "0.11.0"
 
 [[bin]]
 name = "grpc-server"
