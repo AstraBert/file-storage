@@ -18,5 +18,16 @@ export const PresignedUrlSchema = z.object({
   presigned_url: z.string(),
 });
 
+export const SearchRequestSchema = z.object({
+  query: z.string(),
+  limit: z.number().nullable(),
+});
+
+export const SearchResponseSchema = z.object({
+  retrieved: z.array(z.string()),
+});
+
 export type FileMetadata = z.infer<typeof FileMetadataSchema>;
 export type PresignedUrl = z.infer<typeof PresignedUrlSchema>;
+export type SearchRequest = z.infer<typeof SearchRequestSchema>;
+export type SearchResponse = z.infer<typeof SearchResponseSchema>;

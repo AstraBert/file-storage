@@ -1,7 +1,6 @@
 # ── Build stage ──────────────────────────────────────────────────────────────
 FROM rust:1.91-slim AS builder
 
-# System deps needed by some crates (openssl, protobuf, etc.)
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
@@ -10,19 +9,15 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /workspace
 
-# Copy workspace-level Cargo files first for layer caching
 COPY Cargo.toml Cargo.lock ./
-
-# Copy both workspace members
+COPY qdrant-worker/  qdrant-worker/
+COPY observability/ observability/
 COPY app/  app/
 COPY proto/ proto/
-COPY observability/ observability/
 COPY proto-definitions/ proto-definitions/
-COPY qdrant-worker/ qdrant-worker/
 COPY utils/ utils/
 
-# Build only the rest-server binary in release mode
-RUN cargo build --release --bin rest-server
+RUN cargo build --release --bin queue-worker
 
 # ── Runtime stage ─────────────────────────────────────────────────────────────
 FROM debian:trixie-slim
@@ -32,9 +27,9 @@ RUN apt-get update && apt-get install -y \
     libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /workspace/target/release/rest-server /usr/local/bin/rest-server
+COPY --from=builder /workspace/target/release/queue-worker /usr/local/bin/queue-worker
 
-EXPOSE 4444
+EXPOSE 50051
 
-ENV RUST_LOG=warn,rest_server=debug
-CMD ["rest-server"]
+ENV RUST_LOG=warn,queue_worker=debug
+CMD ["queue-worker"]

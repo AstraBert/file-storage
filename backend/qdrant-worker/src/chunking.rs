@@ -28,7 +28,7 @@ pub fn chunk_text(text: &str, size: usize) -> Vec<Chunk> {
         let chunk_struct = Chunk::from_content(c);
         struct_chunks.push(chunk_struct);
     }
-    println!("Created {:?} chunks", struct_chunks.len());
+    log::debug!("Created {:?} chunks", struct_chunks.len());
     struct_chunks
 }
 

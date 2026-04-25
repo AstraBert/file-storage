@@ -28,10 +28,10 @@ impl VectorDB {
         let client = Qdrant::from_url(&self.url)
             .api_key(std::env::var("QDRANT_API_KEY"))
             .build()?;
-        println!("Starting to create collection {}", self.collection_name);
+        log::debug!("Starting to create collection {}", self.collection_name);
         let collection_exists = client.collection_exists(&self.collection_name).await?;
         if collection_exists {
-            println!("Collection {} already exists", self.collection_name);
+            log::debug!("Collection {} already exists", self.collection_name);
             return Ok(());
         }
         let mut sparse_vector_config = SparseVectorsConfigBuilder::default();
@@ -43,10 +43,10 @@ impl VectorDB {
             )
             .await?;
         if response.result {
-            println!("Collection {} successfully created", self.collection_name);
+            log::debug!("Collection {} successfully created", self.collection_name);
             Ok(())
         } else {
-            eprintln!(
+            log::error!(
                 "There was an error creating collection: {}",
                 self.collection_name
             );
@@ -140,10 +140,10 @@ impl VectorDB {
             .await?;
         match response.result {
             Some(_) => {
-                println!("All the vectors have been succcessfully uploaded");
+                log::debug!("All the vectors have been succcessfully uploaded");
             }
             None => {
-                eprintln!("The uploading operation did not produce any result");
+                log::error!("The uploading operation did not produce any result");
                 return Err(anyhow::anyhow!(
                     "The uploading operation did not produce any result"
                 ));
@@ -158,19 +158,17 @@ impl VectorDB {
             .build()?;
         let collection_exists = client.collection_exists(&self.collection_name).await?;
         if !collection_exists {
-            eprintln!(
-                "Collection {} does not exist. Please run `create_collection` before using this function",
+            log::warn!(
+                "Collection {} does not exist. Creating it now...",
                 self.collection_name
             );
-            return Err(anyhow::anyhow!(
-                "Collection does not exist. Please run `create_collection` before using this function"
-            ));
+            self.create_collection().await?;
         }
         let result = client.collection_info(&self.collection_name).await?;
         let collection_info = match result.result {
             Some(r) => r,
             None => {
-                eprintln!("Could not retrieve collection information");
+                log::error!("Could not retrieve collection information");
                 return Err(anyhow::anyhow!("Could not retrieve collection information"));
             }
         };
@@ -183,7 +181,7 @@ impl VectorDB {
                 }
             }
             None => {
-                eprintln!("Could not retrieve the number of data points in the collection");
+                log::error!("Could not retrieve the number of data points in the collection");
                 Err(anyhow::anyhow!(
                     "Could not retrieve the number of data points in the collection"
                 ))
@@ -220,13 +218,13 @@ impl VectorDB {
                 let content: String = match res.payload.get("content") {
                     Some(s) => s.to_string(),
                     None => {
-                        eprintln!("Could not retrieve content, skipping...");
+                        log::error!("Could not retrieve content, skipping...");
                         continue;
                     }
                 };
                 contents.push(content);
             } else {
-                eprintln!("Point does not have an associated text content");
+                log::error!("Point does not have an associated text content");
             }
         }
 

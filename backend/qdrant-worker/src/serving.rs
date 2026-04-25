@@ -40,7 +40,6 @@ pub struct RagServer {
 struct RagRequest {
     query: String,
     limit: Option<u64>,
-    openai_model: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Debug)]
@@ -112,9 +111,7 @@ impl RagServer {
         let vectordb = VectorDB::new(self.qdrant_url.clone(), self.collection_name.clone());
         let coll_loaded = vectordb.check_collection_ready().await?;
         if coll_loaded == 0 {
-            return Err(anyhow::anyhow!(
-                "Vector database does not contain any vectors"
-            ));
+            log::warn!("Vector database does not contain any vectors");
         }
         log::info!("Connected to Qdrant and checked collection existence");
         let auth_config = Arc::new(AuthConfig::new(

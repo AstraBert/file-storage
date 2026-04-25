@@ -87,11 +87,20 @@ services:
       - 4444:4444
     networks:
       - keycloak_network
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     depends_on:
-      - redis
-      - memcached
-      - grpc-server
-      - keycloak
+      redis:
+        condition: service_started
+      memcached:
+        condition: service_started
+      grpc-server:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
 
   grpc-server:
     image: file-storage-grpc
@@ -124,6 +133,7 @@ services:
     depends_on:
       - keycloak
       - rest-server
+      - qdrant-server
 
   jaeger:
     image: jaegertracing/all-in-one:latest
@@ -139,14 +149,22 @@ services:
       - keycloak_network
 
   rabbitmq:
-    image: rabbitmq:latest
+    image: rabbitmq:management
     container_name: rabbitmq
     ports:
       - 15672:15672
       - 5672:5672
+      - 5552:5552
+    command: >
+      sh -c "rabbitmq-plugins enable rabbitmq_stream && rabbitmq-server"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
     networks:
       - keycloak_network
 
@@ -160,6 +178,34 @@ services:
       - ./.qdrant/data:/qdrant/storage
     networks:
       - keycloak_network
+
+  qdrant-queue-worker:
+    image: file-storage-queue-worker
+    container_name: qdrant-queue-worker
+    build:
+      context: backend/
+      dockerfile: queue.Dockerfile
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+    networks:
+      - keycloak_network
+    depends_on:
+      - rest-server
+
+  qdrant-server:
+    image: file-storage-qdrant-server
+    container_name: qdrant-server
+    ports:
+      - 8000:8000
+    build:
+      context: backend/
+      dockerfile: qdrant.Dockerfile
+    networks:
+      - keycloak_network
+    depends_on:
+      - qdrant-queue-worker
+      - qdrant
 
 volumes:
   postgres_data:

@@ -78,6 +78,9 @@ function AppContent() {
           <h2 className="text-xl mb-2">
             A self-hostable, open-source app to store all your files
           </h2>
+          <h3 className="text-lg mb-2">
+            <a href="/search">Search files</a>
+          </h3>
         </div>
         {isLoading && <LoadingSpinner message="Loading your files..." />}
         {!isLoading && files && files.length > 0 && (

@@ -14,6 +14,8 @@ const STREAM_NAME: &str = "worker_queue";
 const CHUNK_SIZE: usize = 1024;
 const QDRANT_URL: &str = "http://qdrant:6334";
 const COLLECTION_NAME: &str = "file_storage_search";
+const STATUS_STARTED: &str = "started";
+const STATUS_COMPLETED: &str = "completed";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct MessageData {
@@ -22,9 +24,22 @@ struct MessageData {
 }
 
 #[tokio::main]
+#[tracing::instrument]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use rabbitmq_stream_client::Environment;
-    let environment = Environment::builder().build().await?;
+    let environment = Environment::builder()
+        .host("rabbitmq")
+        .port(5552)
+        .username(
+            &std::env::var("RABBITMQ_DEFAULT_USER")
+                .expect("Should have RABBITMQ_DEFAULT_USER set in env"),
+        )
+        .password(
+            &std::env::var("RABBITMQ_DEFAULT_PASS")
+                .expect("Should have RABBITMQ_DEFAULT_PASS set in env"),
+        )
+        .build()
+        .await?;
     log::info!("Connected to RabbitMQ");
     let pipeline = Pipeline::new(
         CHUNK_SIZE,
@@ -58,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .await?;
 
     while let Some(Ok(delivery)) = consumer.next().await {
+        tracing::info!(event = "queue_message", status = STATUS_STARTED);
         let message = delivery
             .message()
             .data()
@@ -71,6 +87,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             delivery.offset()
         );
         pipeline.run(&data.content, &data.user_identity).await?;
+        tracing::info!(event = "queue_message", status = STATUS_COMPLETED);
         log::debug!("Successfully ingested message in Qdrant");
     }
 

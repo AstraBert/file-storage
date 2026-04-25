@@ -504,7 +504,19 @@ async fn main() -> anyhow::Result<()> {
         )
         .await?;
     log::info!("Connected to grpc server");
-    let environment = Environment::builder().build().await?;
+    let environment = Environment::builder()
+        .host("rabbitmq")
+        .port(5552)
+        .username(
+            &std::env::var("RABBITMQ_DEFAULT_USER")
+                .expect("Should have RABBITMQ_DEFAULT_USER set in env"),
+        )
+        .password(
+            &std::env::var("RABBITMQ_DEFAULT_PASS")
+                .expect("Should have RABBITMQ_DEFAULT_PASS set in env"),
+        )
+        .build()
+        .await?;
 
     // create the rabbitmq stream if it does not already exist
     let create_response = environment

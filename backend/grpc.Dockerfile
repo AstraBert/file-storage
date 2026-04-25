@@ -14,6 +14,8 @@ COPY app/  app/
 COPY proto/ proto/
 COPY observability/ observability/
 COPY proto-definitions/ proto-definitions/
+COPY qdrant-worker/ qdrant-worker/
+COPY utils/ utils/
 
 RUN cargo build --release --bin grpc-server
 
