@@ -2,13 +2,13 @@ use std::{collections::HashSet, fmt, net::SocketAddr, sync::Arc};
 
 use crate::redis_utils::{
     FileMetadata, check_file_existence_and_copies, delete_file_metadata,
-    get_all_files_and_metadata, hset_file_metadata,
+    get_all_files_and_metadata, get_file_description, hset_file_metadata,
 };
 use anyhow::anyhow;
 use axum::{
     Extension, Json, Router,
     body::Body,
-    extract::{Multipart, Path, Query, Request, State},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -25,16 +25,15 @@ use rabbitmq_stream_client::{
 };
 use serde::{Deserialize, Serialize};
 use tonic::transport::Channel;
-use utils::{AnyHowError, AuthConfig, Claims, build_rate_limiter, extract_token, fetch_jwks};
+use utils::{
+    AnyHowError, AuthConfig, Claims, DEFAULT_AUD, MessageAction, MessageData, STATUS_COMPLETED,
+    STATUS_FAILED, STATUS_STARTED, build_rate_limiter, extract_token, fetch_jwks,
+};
 
 mod redis_utils;
 
 const BUCKET_NAME: &str = "files";
 const STREAM_NAME: &str = "worker_queue";
-const DEFAULT_AUD: &str = "account";
-const STATUS_STARTED: &str = "started";
-const STATUS_COMPLETED: &str = "completed";
-const STATUS_FAILED: &str = "failed";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct GetFilesResponse {
@@ -54,12 +53,6 @@ struct GetPresignedUrlResponse {
 #[derive(Debug, Serialize, Deserialize)]
 struct CheckFileExistenceResponse {
     file_name: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MessageData {
-    content: String,
-    user_identity: String,
 }
 
 #[derive(Clone)]
@@ -365,6 +358,7 @@ async fn post_file(
     let data = MessageData {
         content: format!("{}\n\n{}", &file_name, &description),
         user_identity: format!("{}-{}", claims.sub, claims.iss),
+        action: MessageAction::Create,
     };
     let message = serde_json::to_string(&data)?;
     let msg = Message::builder().body(message).build();
@@ -392,6 +386,22 @@ async fn delete_file(
         file = display_name,
         status = STATUS_STARTED,
     );
+    let description = get_file_description(
+        &state.redis_client,
+        format!("{}-{}", claims.sub, claims.iss).as_str(),
+        &display_name,
+    )
+    .await
+    .map_err(|e| {
+        tracing::error!(
+            event = "delete_file_rest",
+            file = display_name,
+            error = e.to_string(),
+            status = STATUS_FAILED,
+        );
+        e
+    })?;
+    log::debug!("Obtained file description from Redis before deletion");
     delete_file_metadata(
         &state.redis_client,
         format!("{}-{}", claims.sub, claims.iss).as_str(),
@@ -430,15 +440,29 @@ async fn delete_file(
             );
             AnyHowError(anyhow!(e.to_string()), None)
         })?;
+    log::debug!(
+        "Successfully deleted file from S3 for file {} (DELETE /files/<display_name>)",
+        &display_name
+    );
+
+    let data = MessageData {
+        action: MessageAction::Delete,
+        user_identity: format!("{}-{}", claims.sub, claims.iss),
+        content: format!("{}\n\n{}", &display_name, &description),
+    };
+    let message = serde_json::to_string(&data)?;
+    let msg = Message::builder().body(message).build();
+    state.rabbitmq_producer.0.send(msg, |_| async {}).await?;
+
+    log::debug!(
+        "Successfully sent message to RabbitMQ to delete record {} from Qdrant (DELETE /files/<display_name>)",
+        &display_name
+    );
 
     tracing::info!(
         event = "delete_file_rest",
         file = display_name,
         status = STATUS_COMPLETED,
-    );
-    log::debug!(
-        "Successfully deleted file from S3 for file {} (DELETE /files/<display_name>)",
-        &display_name
     );
 
     Ok((StatusCode::NO_CONTENT, ""))
@@ -607,6 +631,7 @@ async fn main() -> anyhow::Result<()> {
             app_state.clone(),
             auth_middleware,
         ))
+        .layer(DefaultBodyLimit::disable())
         .with_state(app_state);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:4444").await?;
     log::info!("Starting to serve the rest API on port 4444");

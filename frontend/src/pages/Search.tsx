@@ -33,8 +33,11 @@ type SearchResult = {
 };
 
 function parseResult(raw: string): SearchResult {
-  const [fileName, ...rest] = raw.split("\n\n");
-  return { fileName, fileDescription: rest.join("\n\n") };
+  const [name, ...rest] = raw.split("\\n\\n");
+  const fileName = name.slice(1); // exclude double quotes at the beginning
+  const desc = rest.join("\\n\\n");
+  const fileDescription = desc.slice(0, desc.length - 1); // exclude double quotes at the end
+  return { fileName, fileDescription };
 }
 
 export default function Search() {
@@ -99,10 +102,17 @@ export default function Search() {
   return (
     <div className="max-w-4xl mx-auto px-6 py-10 space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Search Files</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Find files by name or description
-        </p>
+        <div className="flex flex-col items-center align-top">
+          <h1 className="text-3xl font-bold bg-linear-to-r from-gray-400 to-gray-600 bg-clip-text text-transparent">
+            Search Files
+          </h1>
+          <h2 className="text-xl mb-2">Find files by name or description</h2>
+          <Button variant="link">
+            <a href="/">
+              <span className="text-lg mb-2">Home</span>
+            </a>
+          </Button>
+        </div>
       </div>
 
       {/* Search bar */}
@@ -154,6 +164,7 @@ export default function Search() {
                   <Button
                     variant="outline"
                     size="icon"
+                    className="cursor-pointer"
                     onClick={() => handleGetUrl(result.fileName)}
                   >
                     <Share2Icon className="w-4 h-4" />
@@ -161,6 +172,7 @@ export default function Search() {
                   <Button
                     variant="outline"
                     size="icon"
+                    className="cursor-pointer"
                     onClick={() => handleDelete(result.fileName)}
                   >
                     <Trash className="w-4 h-4 text-red-400" />
@@ -170,12 +182,6 @@ export default function Search() {
             ))}
           </TableBody>
         </Table>
-      )}
-
-      {!loading && results.length === 0 && query && (
-        <p className="text-sm text-muted-foreground text-center py-10">
-          No results found for "{query}"
-        </p>
       )}
 
       {/* Share URL dialog */}

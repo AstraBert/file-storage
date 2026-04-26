@@ -86,7 +86,7 @@ pub fn init_tracing_subscriber() -> OtelGuard {
         // per-layer filtering to target the telemetry layer specifically,
         // e.g. by target matching.
         .with(tracing_subscriber::filter::LevelFilter::from_level(
-            Level::INFO,
+            Level::DEBUG,
         ))
         .with(tracing_subscriber::fmt::layer())
         .with(MetricsLayer::new(meter_provider.clone()))

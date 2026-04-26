@@ -2,41 +2,57 @@ use bm25::Embedding;
 use qdrant_client::{
     Payload, Qdrant,
     qdrant::{
-        Condition, CreateCollectionBuilder, Filter, NamedVectors, PointStruct, QueryPointsBuilder,
-        SparseVectorParamsBuilder, SparseVectorsConfigBuilder, UpsertPointsBuilder, Vector,
+        Condition, CreateCollectionBuilder, DeletePointsBuilder, Filter, NamedVectors, PointStruct,
+        PointsIdsList, QueryPointsBuilder, ScrollPointsBuilder, SparseVectorParamsBuilder,
+        SparseVectorsConfigBuilder, UpsertPointsBuilder, Vector,
     },
 };
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt, sync::Arc};
 
 use crate::chunking::Chunk;
 
+#[derive(Clone)]
+pub struct DebuggableQdrant(pub Arc<Qdrant>);
+
+impl fmt::Debug for DebuggableQdrant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Qdrant")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VectorDB {
-    pub collection_name: String,
-    pub url: String,
+    client: DebuggableQdrant,
+    collection_name: String,
 }
 
 impl VectorDB {
-    pub fn new(url: String, collection_name: String) -> Self {
-        Self {
-            collection_name,
-            url,
-        }
+    pub fn new(url: String, collection_name: String) -> anyhow::Result<Self> {
+        let client = Qdrant::from_url(&url)
+            .api_key(std::env::var("QDRANT_API_KEY"))
+            .build()?;
+        Ok(Self {
+            client: DebuggableQdrant(Arc::new(client)),
+            collection_name: collection_name,
+        })
     }
 
     pub async fn create_collection(&self) -> anyhow::Result<()> {
-        let client = Qdrant::from_url(&self.url)
-            .api_key(std::env::var("QDRANT_API_KEY"))
-            .build()?;
         log::debug!("Starting to create collection {}", self.collection_name);
-        let collection_exists = client.collection_exists(&self.collection_name).await?;
+        let collection_exists = self
+            .client
+            .0
+            .collection_exists(&self.collection_name)
+            .await?;
         if collection_exists {
             log::debug!("Collection {} already exists", self.collection_name);
             return Ok(());
         }
         let mut sparse_vector_config = SparseVectorsConfigBuilder::default();
         sparse_vector_config.add_named_vector_params("text", SparseVectorParamsBuilder::default());
-        let response = client
+        let response = self
+            .client
+            .0
             .create_collection(
                 CreateCollectionBuilder::new(&self.collection_name)
                     .sparse_vectors_config(sparse_vector_config),
@@ -87,14 +103,15 @@ impl VectorDB {
                 ));
             }
         };
-        let client = Qdrant::from_url(&self.url)
-            .api_key(std::env::var("QDRANT_API_KEY"))
-            .build()?;
         log::debug!(
             "Starting to upload embeddings to collection {}",
             self.collection_name
         );
-        let collection_exists = client.collection_exists(&self.collection_name).await?;
+        let collection_exists = self
+            .client
+            .0
+            .collection_exists(&self.collection_name)
+            .await?;
         if !collection_exists {
             log::error!(
                 "Collection {} does not exist. Please run `create_collection` before using this function",
@@ -135,7 +152,9 @@ impl VectorDB {
             );
             points.push(point);
         }
-        let response = client
+        let response = self
+            .client
+            .0
             .upsert_points(UpsertPointsBuilder::new(&self.collection_name, points))
             .await?;
         match response.result {
@@ -153,10 +172,11 @@ impl VectorDB {
     }
 
     pub async fn check_collection_ready(&self) -> anyhow::Result<u64> {
-        let client = Qdrant::from_url(&self.url)
-            .api_key(std::env::var("QDRANT_API_KEY"))
-            .build()?;
-        let collection_exists = client.collection_exists(&self.collection_name).await?;
+        let collection_exists = self
+            .client
+            .0
+            .collection_exists(&self.collection_name)
+            .await?;
         if !collection_exists {
             log::warn!(
                 "Collection {} does not exist. Creating it now...",
@@ -164,7 +184,7 @@ impl VectorDB {
             );
             self.create_collection().await?;
         }
-        let result = client.collection_info(&self.collection_name).await?;
+        let result = self.client.0.collection_info(&self.collection_name).await?;
         let collection_info = match result.result {
             Some(r) => r,
             None => {
@@ -190,14 +210,11 @@ impl VectorDB {
     }
 
     pub async fn search(
-        self,
+        &self,
         embedding: Embedding,
         limit: u64,
         user_identifier: &str,
     ) -> anyhow::Result<Vec<String>> {
-        let client = Qdrant::from_url(&self.url)
-            .api_key(std::env::var("QDRANT_API_KEY"))
-            .build()?;
         let mut indices_values: Vec<(u32, f32)> = vec![];
         for token in &embedding.0 {
             indices_values.push((token.index, token.value));
@@ -211,7 +228,7 @@ impl VectorDB {
             )]))
             .with_payload(true)
             .using("text");
-        let results = client.query(query).await?;
+        let results = self.client.0.query(query).await?;
         let mut contents: Vec<String> = vec![];
         for res in results.result {
             if res.payload.contains_key("content") {
@@ -229,5 +246,38 @@ impl VectorDB {
         }
 
         Ok(contents)
+    }
+
+    pub async fn delete_point(&self, content: &str, user_identifier: &str) -> anyhow::Result<()> {
+        let response = self
+            .client
+            .0
+            .scroll(
+                ScrollPointsBuilder::new(&self.collection_name)
+                    .filter(Filter::must([
+                        Condition::matches("content", content.to_string()),
+                        Condition::matches("user_identifier", user_identifier.to_string()),
+                    ]))
+                    .limit(1),
+            )
+            .await?;
+        if response.result.is_empty() {
+            // point does not exist
+            return Ok(());
+        }
+        if let Some(first) = response.result.first() {
+            self.client
+                .0
+                .delete_points(
+                    DeletePointsBuilder::new(&self.collection_name)
+                        .points(PointsIdsList {
+                            ids: vec![first.id.clone().unwrap()],
+                        })
+                        .wait(true),
+                )
+                .await?;
+        }
+
+        Ok(())
     }
 }

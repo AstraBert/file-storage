@@ -74,21 +74,33 @@ pub async fn check_file_existence_and_copies(
         let p = path::PathBuf::from(display_name);
         let stem = p.file_stem().unwrap();
         let ext = p.extension().unwrap_or_default();
+        let pattern = if ext.is_empty() {
+            format!(
+                "{}-file:{}_*",
+                user_identifier,
+                stem.to_string_lossy().to_string()
+            )
+        } else {
+            format!(
+                "{}-file:{}_*.{}",
+                user_identifier,
+                stem.to_string_lossy().to_string(),
+                ext.to_string_lossy().to_string(),
+            )
+        };
         let keys: Vec<String> = conn
-            .scan_match(format!("file:{}_*", stem.to_string_lossy().to_string()))
+            .scan_match(pattern)
             .await?
             .map(|r| r.unwrap())
             .collect()
             .await;
-        if keys.len() > 0 {
-            let new_display_name = format!(
-                "{}_{:?}.{}",
-                stem.to_string_lossy().to_string(),
-                keys.len(),
-                ext.to_string_lossy().to_string(),
-            );
-            return Ok(new_display_name.trim_end_matches(".").to_string());
-        }
+        let new_display_name = format!(
+            "{}_{:?}.{}",
+            stem.to_string_lossy().to_string(),
+            keys.len() + 1,
+            ext.to_string_lossy().to_string(),
+        );
+        return Ok(new_display_name.trim_end_matches(".").to_string());
     }
     Ok(display_name.to_string())
 }
@@ -114,6 +126,19 @@ pub async fn get_all_files_and_metadata(
     }
 
     Ok(files)
+}
+
+pub async fn get_file_description(
+    client: &redis::Client,
+    user_identifier: &str,
+    display_name: &str,
+) -> Result<String> {
+    let mut conn = client.get_multiplexed_async_connection().await?;
+    let key = format!("{}-file:{}", user_identifier, display_name);
+    let hset = conn.hgetall(&key).await?;
+    let file = FileMetadata::from_hset(hset)?;
+
+    Ok(file.file_description)
 }
 
 pub async fn delete_file_metadata(

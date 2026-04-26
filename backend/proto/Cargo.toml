@@ -11,6 +11,7 @@ tokio = { version = "1.0", features = ["macros", "rt-multi-thread"] }
 aws-sdk-s3 = { version = "1.129.0", features = ["rt-tokio"] }
 log = "0.4.29"
 tracing = "0.1.44"
+utils = { path = "../utils" }
 
 [build-dependencies]
 tonic-prost-build = "*"

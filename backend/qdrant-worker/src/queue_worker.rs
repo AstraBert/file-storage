@@ -4,9 +4,10 @@ mod ingestion;
 mod vectordb;
 
 use futures::StreamExt;
+use observability::init_tracing_subscriber;
 use rabbitmq_stream_client::error::StreamCreateError;
 use rabbitmq_stream_client::types::{ByteCapacity, OffsetSpecification, ResponseCode};
-use serde::{Deserialize, Serialize};
+use utils::{MessageAction, MessageData, STATUS_COMPLETED, STATUS_STARTED};
 
 use crate::ingestion::Pipeline;
 
@@ -14,19 +15,12 @@ const STREAM_NAME: &str = "worker_queue";
 const CHUNK_SIZE: usize = 1024;
 const QDRANT_URL: &str = "http://qdrant:6334";
 const COLLECTION_NAME: &str = "file_storage_search";
-const STATUS_STARTED: &str = "started";
-const STATUS_COMPLETED: &str = "completed";
-
-#[derive(Debug, Serialize, Deserialize)]
-struct MessageData {
-    content: String,
-    user_identity: String,
-}
 
 #[tokio::main]
 #[tracing::instrument]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     use rabbitmq_stream_client::Environment;
+    let _guard = init_tracing_subscriber();
     let environment = Environment::builder()
         .host("rabbitmq")
         .port(5552)
@@ -45,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CHUNK_SIZE,
         QDRANT_URL.to_string(),
         COLLECTION_NAME.to_string(),
-    );
+    )?;
 
     // create the rabbitmq stream if it does not already exist
     let create_response = environment
@@ -86,9 +80,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             delivery.stream(),
             delivery.offset()
         );
-        pipeline.run(&data.content, &data.user_identity).await?;
+        match data.action {
+            MessageAction::Create => {
+                pipeline.run(&data.content, &data.user_identity).await?;
+            }
+            MessageAction::Delete => {
+                pipeline.delete(&data.content, &data.user_identity).await?;
+            }
+        }
         tracing::info!(event = "queue_message", status = STATUS_COMPLETED);
-        log::debug!("Successfully ingested message in Qdrant");
+        log::debug!("Successfully processed message for Qdrant");
     }
 
     let _ = consumer.handle().close().await;

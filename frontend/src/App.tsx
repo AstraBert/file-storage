@@ -78,9 +78,11 @@ function AppContent() {
           <h2 className="text-xl mb-2">
             A self-hostable, open-source app to store all your files
           </h2>
-          <h3 className="text-lg mb-2">
-            <a href="/search">Search files</a>
-          </h3>
+          <Button variant="link">
+            <a href="/search">
+              <span className="text-lg mb-2">Search Files</span>
+            </a>
+          </Button>
         </div>
         {isLoading && <LoadingSpinner message="Loading your files..." />}
         {!isLoading && files && files.length > 0 && (
@@ -138,14 +140,14 @@ function AppContent() {
             <Button
               disabled={!file}
               variant="default"
-              className="flex-1 rounded-lg shadow-sm"
+              className="flex-1 rounded-lg shadow-sm bg-gray-500 text-neutral-100 hover:bg-gray-700 hover:text-neutral-50 disabled:opacity-50"
               onClick={handleFileUpload}
             >
               Submit
             </Button>
             <Button
-              variant="destructive"
-              className="flex-1 rounded-lg shadow-sm"
+              variant="default"
+              className="flex-1 rounded-lg shadow-sm bg-red-500 text-white hover:bg-red-700 hover:text-white disabled:opacity-50"
               onClick={handleClear}
             >
               Clear

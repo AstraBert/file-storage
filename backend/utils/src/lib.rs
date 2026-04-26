@@ -10,6 +10,11 @@ use memcache::Client;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
+pub const STATUS_STARTED: &str = "started";
+pub const STATUS_COMPLETED: &str = "completed";
+pub const STATUS_FAILED: &str = "failed";
+pub const DEFAULT_AUD: &str = "account";
+
 pub fn build_rate_limiter(cache: &Client, rps: u32) -> RateLimiter<TokenBucket, MemCache> {
     RateLimiter::builder()
         .with_backend(MemCache::new(cache.clone()))
@@ -136,4 +141,17 @@ where
     fn from(err: E) -> Self {
         Self(err.into(), None)
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum MessageAction {
+    Create,
+    Delete,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MessageData {
+    pub action: MessageAction,
+    pub content: String,
+    pub user_identity: String,
 }

@@ -17,16 +17,15 @@ use std::sync::Arc;
 
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
 use tracing::{debug, error, info, instrument};
-use utils::{AnyHowError, AuthConfig, Claims, build_rate_limiter, extract_token, fetch_jwks};
+use utils::{
+    AnyHowError, AuthConfig, Claims, DEFAULT_AUD, STATUS_COMPLETED, STATUS_FAILED, STATUS_STARTED,
+    build_rate_limiter, extract_token, fetch_jwks,
+};
 
 const DEFAULT_PORT: u16 = 8000;
 const DEFAULT_HOST: &str = "0.0.0.0";
 const DEFAULT_RATE_LIMIT: u32 = 100;
 const DEFAULT_SEARCH_LIMIT: u64 = 10;
-const STATUS_STARTED: &str = "started";
-const STATUS_COMPLETED: &str = "completed";
-const STATUS_FAILED: &str = "failed";
-const DEFAULT_AUD: &str = "account";
 
 pub struct RagServer {
     qdrant_url: String,
@@ -108,7 +107,7 @@ impl RagServer {
         let _guard = init_tracing_subscriber();
         let cache = memcache::connect("memcache://memcached:11211")?;
         log::info!("Connected to memcached");
-        let vectordb = VectorDB::new(self.qdrant_url.clone(), self.collection_name.clone());
+        let vectordb = VectorDB::new(self.qdrant_url.clone(), self.collection_name.clone())?;
         let coll_loaded = vectordb.check_collection_ready().await?;
         if coll_loaded == 0 {
             log::warn!("Vector database does not contain any vectors");

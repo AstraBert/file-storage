@@ -3148,6 +3148,7 @@ dependencies = [
  "tonic-prost",
  "tonic-prost-build",
  "tracing",
+ "utils",
 ]
 
 [[package]]

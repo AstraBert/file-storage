@@ -6,6 +6,7 @@ use crate::grpc::file_storage::{
     DeleteObjectRequest, DeleteObjectResponse, GetPresignedUrlRequest, GetPresignedUrlResponse,
     StoreFileRequest, StoreFileResponse, file_storage_service_server::FileStorageService,
 };
+use utils::{STATUS_COMPLETED, STATUS_FAILED, STATUS_STARTED};
 
 pub mod grpc {
     #[path = "file_storage.rs"]
@@ -16,10 +17,6 @@ pub mod grpc {
 pub struct FileStorageServer {
     pub client: Arc<Client>,
 }
-
-const STATUS_STARTED: &str = "started";
-const STATUS_COMPLETED: &str = "completed";
-const STATUS_FAILED: &str = "failed";
 
 #[tonic::async_trait]
 impl FileStorageService for FileStorageServer {
