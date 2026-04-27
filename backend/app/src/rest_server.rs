@@ -74,7 +74,7 @@ struct AppState {
     rabbitmq_producer: DebuggableProducer,
 }
 
-#[tracing::instrument(skip_all, name = "auth_middleware")]
+#[tracing::instrument]
 async fn auth_middleware(
     State(state): State<AppState>,
     headers: HeaderMap,

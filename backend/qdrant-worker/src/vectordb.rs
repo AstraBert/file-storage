@@ -1,10 +1,11 @@
 use bm25::Embedding;
+use qdrant_client::qdrant::point_id::PointIdOptions::{Num, Uuid};
 use qdrant_client::{
     Payload, Qdrant,
     qdrant::{
-        Condition, CreateCollectionBuilder, DeletePointsBuilder, Filter, NamedVectors, PointStruct,
-        PointsIdsList, QueryPointsBuilder, ScrollPointsBuilder, SparseVectorParamsBuilder,
-        SparseVectorsConfigBuilder, UpsertPointsBuilder, Vector,
+        Condition, CountPointsBuilder, CreateCollectionBuilder, DeletePointsBuilder, Filter,
+        NamedVectors, PointStruct, PointsIdsList, QueryPointsBuilder, ScrollPointsBuilder,
+        SparseVectorParamsBuilder, SparseVectorsConfigBuilder, UpsertPointsBuilder, Vector,
     },
 };
 use std::{collections::HashMap, fmt, sync::Arc};
@@ -86,7 +87,7 @@ impl VectorDB {
                 } else {
                     // ready -> exists and contains points
                     log::warn!(
-                        "WARNING: collection already has {:?} points, preparing to upload more...",
+                        "WARNING: collection already has points with ID up to {:?}, preparing to upload more...",
                         num_points
                     );
                     num_points
@@ -184,29 +185,40 @@ impl VectorDB {
             );
             self.create_collection().await?;
         }
-        let result = self.client.0.collection_info(&self.collection_name).await?;
-        let collection_info = match result.result {
-            Some(r) => r,
-            None => {
-                log::error!("Could not retrieve collection information");
-                return Err(anyhow::anyhow!("Could not retrieve collection information"));
-            }
-        };
-        match collection_info.points_count {
-            Some(p) => {
-                if p > 0 {
-                    Ok(p)
-                } else {
-                    Ok(0_u64)
+        let points_count = self
+            .client
+            .0
+            .count(CountPointsBuilder::new(&self.collection_name).exact(true))
+            .await?;
+        let points_number = points_count.result.unwrap_or_default().count;
+        if points_number == 0 {
+            return Ok(points_number);
+        }
+        let all_points = self
+            .client
+            .0
+            .scroll(ScrollPointsBuilder::new(&self.collection_name).limit(points_number as u32))
+            .await?;
+        let mut ids = Vec::with_capacity(all_points.result.len());
+        for point in all_points.result {
+            if let Some(point_id) = point.id {
+                if let Some(point_options) = point_id.point_id_options {
+                    match point_options {
+                        Num(i) => ids.push(i),
+                        Uuid(_) => {
+                            return Err(anyhow::anyhow!(
+                                "Found a point carrying a UUID as ID instead of a u64"
+                            ));
+                        }
+                    }
                 }
             }
-            None => {
-                log::error!("Could not retrieve the number of data points in the collection");
-                Err(anyhow::anyhow!(
-                    "Could not retrieve the number of data points in the collection"
-                ))
-            }
         }
+        if !ids.is_empty() {
+            ids.sort();
+            return Ok(*ids.last().unwrap());
+        }
+        Ok(0_u64)
     }
 
     pub async fn search(

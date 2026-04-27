@@ -133,7 +133,7 @@ impl RagServer {
             });
 
         let app = Router::new()
-            .route("/search", post(rag).layer(post_rl_layer))
+            .route("/search", post(search).layer(post_rl_layer))
             .layer(middleware::from_fn_with_state(
                 state.clone(),
                 auth_middleware,
@@ -153,7 +153,7 @@ impl RagServer {
     }
 }
 
-#[instrument(skip_all, name = "auth_middleware")]
+#[instrument]
 async fn auth_middleware(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -262,7 +262,7 @@ async fn auth_middleware(
 }
 
 #[instrument]
-async fn rag(
+async fn search(
     State(state): State<AppState>,
     Extension(claims): Extension<Claims>,
     Json(payload): Json<RagRequest>,
@@ -273,7 +273,7 @@ async fn rag(
         Some(l) => l,
         None => DEFAULT_SEARCH_LIMIT,
     };
-    info!(event="rag_search", status = STATUS_STARTED, data_id = %payload.query, "Starting vector search operation");
+    info!(event="search", status = STATUS_STARTED, data_id = %payload.query, "Starting vector search operation");
     let now = tokio::time::Instant::now();
     let results = match state
         .vectordb
@@ -293,7 +293,7 @@ async fn rag(
         }
     };
     let elapsed = now.elapsed().as_millis();
-    debug!(event="rag_search", status = STATUS_COMPLETED, data_id = %payload.query, "Total retrieved results: {}/{}", results.len(), search_limit);
-    info!(event="rag_search", status = STATUS_COMPLETED, data_id = %payload.query, "Ended vector search operation in {} ms", elapsed);
+    debug!(event="search", status = STATUS_COMPLETED, data_id = %payload.query, "Total retrieved results: {}/{}", results.len(), search_limit);
+    info!(event="search", status = STATUS_COMPLETED, data_id = %payload.query, "Ended vector search operation in {} ms", elapsed);
     Ok(Json(RagResponse::new(results)))
 }

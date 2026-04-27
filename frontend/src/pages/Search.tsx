@@ -47,17 +47,23 @@ export default function Search() {
   const [loading, setLoading] = useState<boolean>(false);
   const [url, setUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [noResults, setNoResults] = useState<string | null>(null);
 
   const handleSearch = async () => {
     if (!query.trim()) return;
     const client = getSearchClient();
     setLoading(true);
+    setNoResults(null);
+    setResults([]);
     try {
       const response = await client.search({
         query,
         limit: limit ? parseInt(limit) : null,
       });
       setResults(response.retrieved.map(parseResult));
+      if (response.retrieved.length == 0) {
+        setNoResults(`No results for '${query.trim()}'`);
+      }
     } catch (e) {
       toast.error("Search failed", {
         description: `An error occurred during search: ${e}`,
@@ -142,6 +148,12 @@ export default function Search() {
       </div>
 
       {/* Results */}
+      {!loading && noResults && (
+        <div className="flex flex-col items-center">
+          <p className="text-lg text-neutral-500">{noResults}</p>
+        </div>
+      )}
+
       {results.length > 0 && (
         <Table>
           <TableHeader>
